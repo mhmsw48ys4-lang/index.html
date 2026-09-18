@@ -20,25 +20,21 @@ exports.handler = async (event) => {
     ).trim().toUpperCase();
 
     if (!symbol) {
-      return response(400, {
-        error: "اكتب رمز السهم"
-      });
+      return send(400, { error: "اكتب رمز السهم" });
     }
 
     const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
 
     if (!apiKey) {
-      return response(500, {
-        error: "مفتاح Alpha Vantage غير موجود في Netlify"
+      return send(500, {
+        error: "مفتاح Alpha Vantage غير موجود"
       });
     }
 
-    // =========================
-    // Alpha Vantage
-    // =========================
-
-    async function alphaVantage(params) {
-      const url = new URL("https://www.alphavantage.co/query");
+    async function av(params) {
+      const url = new URL(
+        "https://www.alphavantage.co/query"
+      );
 
       Object.entries({
         ...params,
@@ -47,52 +43,47 @@ exports.handler = async (event) => {
         url.searchParams.set(key, value);
       });
 
-      const res = await fetch(url.toString());
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error("خطأ من Alpha Vantage");
-      }
-
-      return data;
+      const r = await fetch(url.toString());
+      return await r.json();
     }
 
-    // =========================
-    // الأسعار اليومية
-    // =========================
+    // ==========================================
+    // الأسعار اليومية - مجاني
+    // ==========================================
 
-    const daily = await alphaVantage({
+    const daily = await av({
       function: "TIME_SERIES_DAILY",
-      symbol,
+      symbol: symbol,
       outputsize: "compact"
     });
 
     if (daily["Error Message"]) {
-      return response(404, {
-        error: `السهم ${symbol} غير موجود أو الرمز غير صحيح`
+      return send(404, {
+        error: "رمز السهم غير صحيح أو غير موجود"
       });
     }
 
     if (daily["Note"] || daily["Information"]) {
-      return response(429, {
-        error: "تم الوصول إلى حد طلبات Alpha Vantage. حاول بعد قليل."
+      return send(429, {
+        error:
+          "Alpha Vantage وصل إلى حد الطلبات. حاول بعد قليل."
       });
     }
 
-    const rawSeries = daily["Time Series (Daily)"];
+    const raw = daily["Time Series (Daily)"];
 
-    if (!rawSeries) {
-      return response(502, {
-        error: "لم تصل بيانات الأسعار من Alpha Vantage",
+    if (!raw) {
+      return send(502, {
+        error: "لم تصل بيانات الأسعار",
         details: daily
       });
     }
 
-    // =========================
-    // تحويل البيانات
-    // =========================
+    // ==========================================
+    // تحويل الأسعار
+    // ==========================================
 
-    const rows = Object.entries(rawSeries)
+    const rows = Object.entries(raw)
       .map(([date, v]) => ({
         date,
         open: Number(v["1. open"]),
@@ -101,257 +92,274 @@ exports.handler = async (event) => {
         close: Number(v["4. close"]),
         volume: Number(v["5. volume"])
       }))
-      .filter(
-        x =>
-          Number.isFinite(x.open) &&
-          Number.isFinite(x.high) &&
-          Number.isFinite(x.low) &&
-          Number.isFinite(x.close) &&
-          Number.isFinite(x.volume)
+      .filter(x =>
+        Number.isFinite(x.open) &&
+        Number.isFinite(x.high) &&
+        Number.isFinite(x.low) &&
+        Number.isFinite(x.close) &&
+        Number.isFinite(x.volume)
       )
-      .sort((a, b) => a.date.localeCompare(b.date));
+      .sort((a, b) =>
+        a.date.localeCompare(b.date)
+      );
 
     if (!rows.length) {
-      return response(502, {
-        error: "وصلت البيانات لكن لم نستطع قراءتها"
+      return send(502, {
+        error: "بيانات السهم فارغة"
       });
     }
 
     const latest = rows[rows.length - 1];
-    const previous = rows.length > 1 ? rows[rows.length - 2] : latest;
+    const previous =
+      rows.length > 1
+        ? rows[rows.length - 2]
+        : latest;
 
-    // =========================
+    const closes = rows.map(x => x.close);
+
+    // ==========================================
     // EMA
-    // =========================
+    // ==========================================
 
     function emaSeries(values, period) {
       if (!values.length) return [];
 
       const k = 2 / (period + 1);
-      const result = [];
-      let ema = values[0];
-
-      result.push(ema);
+      let value = values[0];
+      const result = [value];
 
       for (let i = 1; i < values.length; i++) {
-        ema = values[i] * k + ema * (1 - k);
-        result.push(ema);
+        value =
+          values[i] * k +
+          value * (1 - k);
+
+        result.push(value);
       }
 
       return result;
     }
 
-    const closes = rows.map(x => x.close);
+    const ema12 = emaSeries(closes, 12);
+    const ema20 = emaSeries(closes, 20);
+    const ema30 = emaSeries(closes, 30);
+    const ema50 = emaSeries(closes, 50);
+    const ema26 = emaSeries(closes, 26);
 
-    const ema20Series = emaSeries(closes, 20);
-    const ema30Series = emaSeries(closes, 30);
-    const ema50Series = emaSeries(closes, 50);
-
-    const ema20 = ema20Series.at(-1);
-    const ema30 = ema30Series.at(-1);
-    const ema50 = ema50Series.at(-1);
-
-    // =========================
+    // ==========================================
     // RSI 14
-    // =========================
+    // ==========================================
 
     function calculateRSI(values, period = 14) {
       if (values.length <= period) return null;
 
-      let gains = 0;
-      let losses = 0;
+      let gain = 0;
+      let loss = 0;
 
       for (let i = 1; i <= period; i++) {
-        const change = values[i] - values[i - 1];
+        const change =
+          values[i] - values[i - 1];
 
         if (change >= 0) {
-          gains += change;
+          gain += change;
         } else {
-          losses += Math.abs(change);
+          loss += Math.abs(change);
         }
       }
 
-      let avgGain = gains / period;
-      let avgLoss = losses / period;
+      let avgGain = gain / period;
+      let avgLoss = loss / period;
 
-      for (let i = period + 1; i < values.length; i++) {
-        const change = values[i] - values[i - 1];
+      for (
+        let i = period + 1;
+        i < values.length;
+        i++
+      ) {
+        const change =
+          values[i] - values[i - 1];
 
-        const gain = change > 0 ? change : 0;
-        const loss = change < 0 ? Math.abs(change) : 0;
+        const g = change > 0 ? change : 0;
+        const l =
+          change < 0 ? Math.abs(change) : 0;
 
         avgGain =
-          ((avgGain * (period - 1)) + gain) / period;
+          ((avgGain * (period - 1)) + g) /
+          period;
 
         avgLoss =
-          ((avgLoss * (period - 1)) + loss) / period;
+          ((avgLoss * (period - 1)) + l) /
+          period;
       }
 
       if (avgLoss === 0) return 100;
 
       const rs = avgGain / avgLoss;
 
-      return 100 - (100 / (1 + rs));
+      return 100 - 100 / (1 + rs);
     }
 
-    const rsi14 = calculateRSI(closes, 14);
+    const rsi14 =
+      calculateRSI(closes, 14);
 
-    // =========================
+    // ==========================================
     // MACD
-    // =========================
-
-    const ema12Series = emaSeries(closes, 12);
-    const ema26Series = emaSeries(closes, 26);
+    // ==========================================
 
     const macdSeries = closes.map(
-      (_, i) => ema12Series[i] - ema26Series[i]
+      (_, i) =>
+        ema12[i] - ema26[i]
     );
 
-    const signalSeries = emaSeries(macdSeries, 9);
+    const signalSeries =
+      emaSeries(macdSeries, 9);
 
-    const macd = macdSeries.at(-1);
-    const previousMacd = macdSeries.at(-2) ?? macd;
-    const macdSignal = signalSeries.at(-1);
-    const macdHistogram = macd - macdSignal;
+    const macd =
+      macdSeries[macdSeries.length - 1];
 
-    // =========================
-    // Volume / RVOL
-    // =========================
+    const previousMacd =
+      macdSeries.length > 1
+        ? macdSeries[macdSeries.length - 2]
+        : macd;
 
-    const volume20Rows = rows.slice(-21, -1);
+    const macdSignal =
+      signalSeries[signalSeries.length - 1];
+
+    const macdHistogram =
+      macd - macdSignal;
+
+    // ==========================================
+    // Volume + RVOL
+    // ==========================================
+
+    const last20 =
+      rows.slice(-21, -1);
 
     const averageVolume20 =
-      volume20Rows.length
-        ? volume20Rows.reduce((sum, x) => sum + x.volume, 0) /
-          volume20Rows.length
+      last20.length
+        ? last20.reduce(
+            (sum, x) => sum + x.volume,
+            0
+          ) / last20.length
         : latest.volume;
 
     const rvol =
       averageVolume20 > 0
-        ? latest.volume / averageVolume20
-        : null;
+        ? latest.volume /
+          averageVolume20
+        : 0;
 
-    // =========================
-    // إيجاد القاع الحالي
-    // =========================
+    // ==========================================
+    // أعلى وأدنى سعر
+    // ==========================================
 
-    function findPivot(rows) {
-      if (rows.length < 3) {
-        return {
-          price: rows[0].low,
-          date: rows[0].date,
-          index: 0
+    const lowest =
+      rows.reduce(
+        (a, b) =>
+          b.low < a.low ? b : a,
+        rows[0]
+      );
+
+    const highest =
+      rows.reduce(
+        (a, b) =>
+          b.high > a.high ? b : a,
+        rows[0]
+      );
+
+    // ==========================================
+    // البحث عن آخر ارتكاز
+    // ==========================================
+
+    let pivot = null;
+
+    const start =
+      Math.max(1, rows.length - 60);
+
+    for (
+      let i = start;
+      i < rows.length - 1;
+      i++
+    ) {
+      if (
+        rows[i].low <= rows[i - 1].low &&
+        rows[i].low <= rows[i + 1].low
+      ) {
+        pivot = {
+          price: rows[i].low,
+          date: rows[i].date,
+          index: i
         };
       }
-
-      const start = Math.max(1, rows.length - 60);
-
-      let candidates = [];
-
-      for (let i = start; i < rows.length - 1; i++) {
-        const current = rows[i];
-        const before = rows[i - 1];
-        const after = rows[i + 1];
-
-        if (
-          current.low <= before.low &&
-          current.low <= after.low
-        ) {
-          candidates.push({
-            price: current.low,
-            date: current.date,
-            index: i
-          });
-        }
-      }
-
-      if (!candidates.length) {
-        let min = rows[start];
-
-        for (let i = start + 1; i < rows.length; i++) {
-          if (rows[i].low < min.low) {
-            min = rows[i];
-          }
-        }
-
-        return {
-          price: min.low,
-          date: min.date,
-          index: rows.indexOf(min)
-        };
-      }
-
-      return candidates[candidates.length - 1];
     }
 
-    let pivot = findPivot(rows);
+    if (!pivot) {
+      pivot = {
+        price: lowest.low,
+        date: lowest.date,
+        index: rows.indexOf(lowest)
+      };
+    }
 
-    // =========================
+    // ==========================================
     // ثبات القاع 4 أيام
     // إذا انكسر القاع يبدأ العد من جديد
-    // =========================
+    // ==========================================
 
     let stabilityCount = 1;
-    let brokenAndRestarted = false;
+    let restarted = false;
 
-    for (let i = pivot.index + 1; i < rows.length; i++) {
-      const candle = rows[i];
-
-      if (candle.low < pivot.price) {
+    for (
+      let i = pivot.index + 1;
+      i < rows.length;
+      i++
+    ) {
+      if (rows[i].low < pivot.price) {
         pivot = {
-          price: candle.low,
-          date: candle.date,
+          price: rows[i].low,
+          date: rows[i].date,
           index: i
         };
 
         stabilityCount = 1;
-        brokenAndRestarted = true;
+        restarted = true;
       } else {
         stabilityCount++;
       }
     }
 
-    const requiredStabilityDays = 4;
+    const required = 4;
 
     const stabilityComplete =
-      stabilityCount >= requiredStabilityDays;
+      stabilityCount >= required;
 
-    const stabilityRemaining = Math.max(
-      0,
-      requiredStabilityDays - stabilityCount
-    );
+    const remaining =
+      Math.max(
+        0,
+        required - stabilityCount
+      );
 
-    // =========================
-    // الارتداد من القاع
-    // =========================
+    // ==========================================
+    // نسبة الارتداد من القاع
+    // ==========================================
 
     const bouncePercent =
       pivot.price > 0
-        ? ((latest.close - pivot.price) / pivot.price) * 100
-        : null;
+        ? (
+            (latest.close - pivot.price) /
+            pivot.price
+          ) * 100
+        : 0;
 
-    // =========================
-    // أعلى / أدنى 100 جلسة
-    // =========================
-
-    const lowestRow = rows.reduce(
-      (min, x) => x.low < min.low ? x : min,
-      rows[0]
-    );
-
-    const highestRow = rows.reduce(
-      (max, x) => x.high > max.high ? x : max,
-      rows[0]
-    );
-
-    // =========================
+    // ==========================================
     // شروط الارتكاز
-    // =========================
+    // ==========================================
 
-    const supportDistance =
+    const distanceFromPivot =
       pivot.price > 0
-        ? ((latest.close - pivot.price) / pivot.price) * 100
-        : null;
+        ? (
+            (latest.close - pivot.price) /
+            pivot.price
+          ) * 100
+        : 0;
 
     const conditions = {
       rsiLow:
@@ -360,9 +368,8 @@ exports.handler = async (event) => {
         rsi14 <= 27,
 
       supportNear:
-        supportDistance !== null &&
-        supportDistance >= 0 &&
-        supportDistance <= 10,
+        distanceFromPivot >= 0 &&
+        distanceFromPivot <= 10,
 
       positiveCandle:
         latest.close > latest.open,
@@ -370,17 +377,16 @@ exports.handler = async (event) => {
       macdImproving:
         macd > previousMacd,
 
-      priceAboveEMA20:
-        latest.close > ema20,
+      aboveEMA20:
+        latest.close > ema20[ema20.length - 1],
 
-      priceAboveEMA30:
-        latest.close > ema30,
+      aboveEMA30:
+        latest.close > ema30[ema30.length - 1],
 
-      priceAboveEMA50:
-        latest.close > ema50,
+      aboveEMA50:
+        latest.close > ema50[ema50.length - 1],
 
       volumeImproving:
-        rvol !== null &&
         rvol >= 1.2,
 
       stabilityFourDays:
@@ -395,11 +401,11 @@ exports.handler = async (event) => {
     const pivotTotal =
       Object.keys(conditions).length;
 
-    // =========================
+    // ==========================================
     // التقسيمات
-    // =========================
+    // ==========================================
 
-    let splitInfo = {
+    let split = {
       found: false,
       date: null,
       ratio: null,
@@ -407,73 +413,81 @@ exports.handler = async (event) => {
     };
 
     try {
-      const splitsResponse = await alphaVantage({
+      const splitData = await av({
         function: "SPLITS",
-        symbol
+        symbol: symbol
       });
 
-      let splitArray = [];
+      let list = [];
 
-      if (Array.isArray(splitsResponse.data)) {
-        splitArray = splitsResponse.data;
-      } else if (Array.isArray(splitsResponse.splits)) {
-        splitArray = splitsResponse.splits;
+      if (Array.isArray(splitData.data)) {
+        list = splitData.data;
       }
 
-      const normalizedSplits = splitArray
-        .map(item => ({
-          date:
-            item.date ||
-            item.splitDate ||
-            null,
+      if (Array.isArray(splitData.splits)) {
+        list = splitData.splits;
+      }
 
-          ratio:
-            item.splitCoefficient ||
-            item.splitRatio ||
-            item.ratio ||
-            null
-        }))
-        .filter(x => x.date)
-        .sort((a, b) =>
-          b.date.localeCompare(a.date)
-        );
+      const normalized =
+        list
+          .map(x => ({
+            date:
+              x.date ||
+              x.splitDate ||
+              null,
 
-      if (normalizedSplits.length) {
-        const latestSplit = normalizedSplits[0];
+            ratio:
+              x.splitCoefficient ||
+              x.splitRatio ||
+              x.ratio ||
+              null
+          }))
+          .filter(x => x.date)
+          .sort((a, b) =>
+            b.date.localeCompare(a.date)
+          );
+
+      if (normalized.length) {
+        const s = normalized[0];
 
         const splitDate =
-          new Date(latestSplit.date);
+          new Date(s.date);
 
-        const today = new Date();
+        const today =
+          new Date();
 
-        const daysSince = Math.max(
-          0,
-          Math.floor(
-            (
-              Date.UTC(
-                today.getFullYear(),
-                today.getMonth(),
-                today.getDate()
-              ) -
-              Date.UTC(
-                splitDate.getUTCFullYear(),
-                splitDate.getUTCMonth(),
-                splitDate.getUTCDate()
-              )
-            ) / 86400000
-          )
-        );
+        const todayUTC =
+          Date.UTC(
+            today.getUTCFullYear(),
+            today.getUTCMonth(),
+            today.getUTCDate()
+          );
 
-        splitInfo = {
+        const splitUTC =
+          Date.UTC(
+            splitDate.getUTCFullYear(),
+            splitDate.getUTCMonth(),
+            splitDate.getUTCDate()
+          );
+
+        const daysSince =
+          Math.max(
+            0,
+            Math.floor(
+              (todayUTC - splitUTC) /
+              86400000
+            )
+          );
+
+        split = {
           found: true,
-          date: latestSplit.date,
-          ratio: latestSplit.ratio,
+          date: s.date,
+          ratio: s.ratio,
           daysSince
         };
       }
-    } catch (splitError) {
-      // إذا لم تصل بيانات التقسيم لا نوقف بيانات السهم
-      splitInfo = {
+    } catch (e) {
+      split = {
         found: false,
         date: null,
         ratio: null,
@@ -481,109 +495,121 @@ exports.handler = async (event) => {
       };
     }
 
-    // =========================
+    // ==========================================
     // النتيجة
-    // =========================
+    // ==========================================
 
-    return response(200, {
-      symbol,
+    return send(200, {
 
-      source: "Alpha Vantage",
+      // مهم للواجهة الحالية
+      data: daily,
 
-      latest: {
-        date: latest.date,
-        open: latest.open,
-        high: latest.high,
-        low: latest.low,
-        close: latest.close,
-        volume: latest.volume
-      },
+      symbol: symbol,
 
-      previous: {
-        date: previous.date,
-        close: previous.close,
-        volume: previous.volume
-      },
+      latest: latest,
+
+      previous: previous,
 
       lowest: {
-        price: lowestRow.low,
-        date: lowestRow.date
+        price: lowest.low,
+        date: lowest.date
       },
 
       highest: {
-        price: highestRow.high,
-        date: highestRow.date
+        price: highest.high,
+        date: highest.date
       },
 
       pivot: {
         price: pivot.price,
         date: pivot.date,
-        bouncePercent,
+        bouncePercent:
+          Number(bouncePercent.toFixed(2)),
         score: pivotScore,
         total: pivotTotal,
-        conditions
+        conditions: conditions
       },
 
       stability: {
         pivotLow: pivot.price,
         pivotDate: pivot.date,
         count: stabilityCount,
-        required: requiredStabilityDays,
-        remaining: stabilityRemaining,
+        required: required,
+        remaining: remaining,
         complete: stabilityComplete,
-        brokenAndRestarted
+        brokenAndRestarted: restarted
       },
 
       indicators: {
-        ema20,
-        ema30,
-        ema50,
+        ema20:
+          ema20[ema20.length - 1],
 
-        rsi14,
+        ema30:
+          ema30[ema30.length - 1],
 
-        macd,
-        macdSignal,
-        macdHistogram,
+        ema50:
+          ema50[ema50.length - 1],
 
-        volume: latest.volume,
-        averageVolume20,
-        rvol
+        rsi14: rsi14,
+
+        macd: macd,
+
+        macdSignal: macdSignal,
+
+        macdHistogram:
+          macdHistogram,
+
+        volume:
+          latest.volume,
+
+        averageVolume20:
+          averageVolume20,
+
+        rvol:
+          rvol
       },
 
-      split: splitInfo,
+      split: split,
 
-      // الأخبار سنربطها لاحقاً
       news: {
         items: [],
-        status: "لم يتم ربط الأخبار بعد"
+        status:
+          "الأخبار سيتم ربطها لاحقاً"
       },
 
-      // آخر البيانات للرسوم والتحليل مستقبلاً
       series: rows
     });
 
   } catch (error) {
-    return response(500, {
-      error: "حدث خطأ أثناء جلب بيانات السهم",
-      details: error.message
+
+    return send(500, {
+      error:
+        "حدث خطأ أثناء جلب بيانات السهم",
+      details:
+        error.message
     });
   }
 };
 
 
-// =========================
-// Response helper
-// =========================
+// ==========================================
+// إرسال النتيجة
+// ==========================================
 
-function response(statusCode, body) {
+function send(statusCode, body) {
   return {
-    statusCode,
+    statusCode: statusCode,
+
     headers: {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Content-Type": "application/json; charset=utf-8"
+      "Access-Control-Allow-Headers":
+        "Content-Type",
+      "Access-Control-Allow-Methods":
+        "GET, OPTIONS",
+      "Content-Type":
+        "application/json; charset=utf-8"
     },
+
     body: JSON.stringify(body)
   };
 }
