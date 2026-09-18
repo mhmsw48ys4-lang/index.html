@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>مراقب الارتكاز</title>
+
+<style>
+*{
+  box-sizing:border-box;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial,sans-serif;
+}
+
+body{
+  margin:0;
+  background:#eef2f3;
+  color:#172026;
+}
+
+.header{
+  background:#172329;
+  color:white;
+  padding:22px 18px 26px;
+  border-radius:0 0 24px 24px;
+}
+
+.header h1{
+  margin:0;
+  font-size:25px;
+}
+
+.header p{
+  margin:7px 0 0;
+  color:#aeb9bd;
+  font-size:14px;
+}
+
+.container{
+  max-width:850px;
+  margin:auto;
+  padding:18px;
+}
+
+.search-box{
+  background:white;
+  padding:14px;
+  border-radius:18px;
+  box-shadow:0 3px 12px #00000012;
+  margin-bottom:18px;
+}
+
+.search-row{
+  display:flex;
+  gap:9px;
+}
+
+input{
+  flex:1;
+  border:1px solid #d7dfe2;
+  border-radius:13px;
+  padding:14px;
+  font-size:17px;
+  direction:ltr;
+  outline:none;
+}
+
+button{
+  border:0;
+  border-radius:13px;
+  padding:0 20px;
+  background:#159b76;
+  color:white;
+  font-size:16px;
+  font-weight:bold;
+}
+
+button:active{
+  transform:scale(.98);
+}
+
+.card{
+  background:white;
+  border-radius:22px;
+  margin-bottom:18px;
+  overflow:hidden;
+  box-shadow:0 3px 14px #00000012;
+}
+
+.card-head{
+  padding:18px;
+  border-bottom:1px solid #edf0f1;
+}
+
+.symbol{
+  font-size:26px;
+  font-weight:800;
+  direction:ltr;
+  text-align:right;
+}
+
+.name{
+  color:#68757a;
+  margin-top:4px;
+  font-size:14px;
+}
+
+.price-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-top:17px;
+}
+
+.price{
+  font-size:31px;
+  font-weight:800;
+  direction:ltr;
+}
+
+.badge{
+  background:#e5f7ef;
+  color:#07845e;
+  padding:7px 11px;
+  border-radius:20px;
+  font-weight:bold;
+}
+
+.grid{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:10px;
+  padding:14px;
+}
+
+.metric{
+  background:#f5f7f8;
+  border-radius:15px;
+  padding:13px;
+}
+
+.metric .label{
+  color:#778287;
+  font-size:12px;
+  margin-bottom:5px;
+}
+
+.metric .value{
+  font-size:18px;
+  font-weight:750;
+  direction:ltr;
+}
+
+.good{
+  color:#07845e;
+}
+
+.warn{
+  color:#d78900;
+}
+
+.bad{
+  color:#d13b3b;
+}
+
+.stability{
+  margin:0 14px 14px;
+  padding:15px;
+  border-radius:16px;
+  background:#edf8f4;
+}
+
+.stability-title{
+  font-weight:bold;
+  margin-bottom:8px;
+}
+
+.progress{
+  height:9px;
+  background:#d8e6e1;
+  border-radius:20px;
+  overflow:hidden;
+}
+
+.progress-bar{
+  height:100%;
+  background:#159b76;
+  border-radius:20px;
+}
+
+.conditions{
+  border-top:1px solid #edf0f1;
+  padding:16px;
+}
+
+.conditions-title{
+  font-weight:bold;
+  margin-bottom:12px;
+}
+
+.condition{
+  display:flex;
+  justify-content:space-between;
+  padding:9px 0;
+  border-bottom:1px solid #f0f2f3;
+  font-size:14px;
+}
+
+.check{
+  font-weight:bold;
+}
+
+.note{
+  padding:13px 16px 18px;
+  color:#7b8589;
+  font-size:12px;
+}
+
+.empty{
+  text-align:center;
+  padding:45px 15px;
+  color:#778287;
+}
+
+@media(max-width:500px){
+  .grid{
+    grid-template-columns:repeat(2,1fr);
+  }
+
+  .price{
+    font-size:27px;
+  }
+
+  button{
+    padding:0 15px;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<div class="header">
+  <h1>مراقب استراتيجية الارتكاز</h1>
+  <p>Pivot • Support • Momentum • Stability</p>
+</div>
+
+<div class="container">
+
+  <div class="search-box">
+    <div class="search-row">
+      <input id="ticker" type="text" placeholder="اكتب رمز السهم مثل NTCL">
+      <button onclick="addStock()">إضافة</button>
+    </div>
+  </div>
+
+  <div id="stocks"></div>
+
+</div>
+
+<script>
+
+const demoData = {
+
+  NTCL:{
+    name:"NETCLASS TECHNOLOGY INC.",
+    price:1.90,
+    low:1.73,
+    high:2.53,
+    bounce:9.83,
+    ema20:1.88,
+    ema30:1.92,
+    ema50:2.02,
+    rsi:42.3,
+    macd:1,
+    volume:"850K",
+    rvol:"1.8",
+    stable:3,
+    required:5,
+    split:"6 : 1",
+    splitDate:"2026-08-25"
+  },
+
+  PN:{
+    name:"PN SAMPLE COMPANY",
+    price:2.15,
+    low:1.92,
+    high:2.80,
+    bounce:11.98,
+    ema20:2.02,
+    ema30:1.98,
+    ema50:1.90,
+    rsi:46.2,
+    macd:1,
+    volume:"1.8M",
+    rvol:"2.4",
+    stable:4,
+    required:5,
+    split:"—",
+    splitDate:"—"
+  },
+
+  CPOP:{
+    name:"POP CULTURE GROUP CO.",
+    price:3.745,
+    low:3.23,
+    high:3.62,
+    bounce:15.94,
+    ema20:3.10,
+    ema30:3.00,
+    ema50:2.85,
+    rsi:95.27,
+    macd:1,
+    volume:"1.2M",
+    rvol:"2.7",
+    stable:3,
+    required:5,
+    split:"—",
+    splitDate:"—"
+  },
+
+  NUWE:{
+    name:"NUWELLIS INC.",
+    price:1.42,
+    low:1.30,
+    high:1.88,
+    bounce:9.23,
+    ema20:1.48,
+    ema30:1.51,
+    ema50:1.62,
+    rsi:39.8,
+    macd:-1,
+    volume:"700K",
+    rvol:"1.3",
+    stable:2,
+    required:5,
+    split:"—",
+    splitDate:"—"
+  }
+
+};
+
+let stocks=[];
+
+function addStock(){
+
+  const input=document.getElementById("ticker");
+  const ticker=input.value.trim().toUpperCase();
+
+  if(!ticker){
+    alert("اكتب رمز السهم أولاً");
+    return;
+  }
+
+  if(stocks.includes(ticker)){
+    alert("السهم موجود بالفعل");
+    return;
+  }
+
+  stocks.push(ticker);
+  input.value="";
+  render();
+
+}
+
+function removeStock(ticker){
+
+  stocks=stocks.filter(x=>x!==ticker);
+  render();
+
+}
+
+function render(){
+
+  const box=document.getElementById("stocks");
+
+  if(stocks.length===0){
+
+    box.innerHTML=`
+      <div class="card">
+        <div class="empty">
+          اكتب رمز السهم لإضافته إلى المراقبة<br>
+          مثال: <b>NTCL</b>
+        </div>
+      </div>
+    `;
+
+    return;
+  }
+
+  box.innerHTML=stocks.map(ticker=>{
+
+    const s=demoData[ticker] || {
+
+      name:"بيانات تجريبية — سيتم ربطها بالبيانات الحية",
+      price:0,
+      low:0,
+      high:0,
+      bounce:0,
+      ema20:0,
+      ema30:0,
+      ema50:0,
+      rsi:0,
+      macd:0,
+      volume:"—",
+      rvol:"—",
+      stable:0,
+      required:5,
+      split:"—",
+      splitDate:"—"
+
+    };
+
+    const progress=Math.min(
+      100,
+      (s.stable/s.required)*100
+    );
+
+    const remaining=Math.max(
+      0,
+      s.required-s.stable
+    );
+
+    const macdText=s.macd>0 ? "إيجابي" : "سلبي";
+
+    return `
+
+    <div class="card">
+
+      <div class="card-head">
+
+        <div class="symbol">${ticker}</div>
+
+        <div class="name">${s.name}</div>
+
+        <div class="price-row">
+
+          <div class="price">
+            ${s.price ? "$"+s.price : "—"}
+          </div>
+
+          <div class="badge">
+            مراقبة
+          </div>
+
+        </div>
+
+      </div>
+
+      <div class="grid">
+
+        <div class="metric">
+          <div class="label">آخر قاع / Pivot</div>
+          <div class="value">$${s.low}</div>
+        </div>
+
+        <div class="metric">
+          <div class="label">آخر قمة</div>
+          <div class="value">$${s.high}</div>
+        </div>
+
+        <div class="metric">
+          <div class="label">الارتداد من القاع</div>
+          <div class="value good">${s.bounce}%</div>
+        </div>
+
+        <div class="metric">
+          <div class="label">RSI 14</div>
+          <div class="value">${s.rsi}</div>
+        </div>
+
+        <div class="metric">
+          <div class="label">MACD</div>
+          <div class="value ${s.macd>0?'good':'bad'}">
+            ${macdText}
+          </div>
+        </div>
+
+        <div class="metric">
+          <div class="label">Volume</div>
+          <div class="value">${s.volume}</div>
+        </div>
+
+        <div class="metric">
+          <div class="label">RVOL</div>
+          <div class="value">${s.rvol}</div>
+        </div>
+
+        <div class="metric">
+          <div class="label">Split</div>
+          <div class="value">${s.split}</div>
+        </div>
+
+        <div class="metric">
+          <div class="label">EMA 20</div>
+          <div class="value">${s.ema20}</div>
+        </div>
+
+        <div class="metric">
+          <div class="label">EMA 30</div>
+          <div class="value">${s.ema30}</div>
+        </div>
+
+        <div class="metric">
+          <div class="label">EMA 50</div>
+          <div class="value">${s.ema50}</div>
+        </div>
+
+        <div class="metric">
+          <div class="label">تاريخ التقسيم</div>
+          <div class="value">${s.splitDate}</div>
+        </div>
+
+      </div>
+
+      <div class="stability">
+
+        <div class="stability-title">
+          ثبات الارتكاز:
+          ${s.stable} / ${s.required} أيام
+
+          ${
+            remaining>0
+            ? ` — باقي ${remaining} أيام`
+            : ` — مكتمل ✓`
+          }
+
+        </div>
+
+        <div class="progress">
+          <div
+            class="progress-bar"
+            style="width:${progress}%">
+          </div>
+        </div>
+
+      </div>
+
+      <div class="conditions">
+
+        <div class="conditions-title">
+          شروط متابعة غير مكتملة — لا تمنع الإضافة
+        </div>
+
+        <div class="condition">
+          <span>السعر فوق EMA20</span>
+          <span class="check">
+            ${s.price>s.ema20 ? "✓" : "✕"}
+          </span>
+        </div>
+
+        <div class="condition">
+          <span>السعر فوق EMA30</span>
+          <span class="check">
+            ${s.price>s.ema30 ? "✓" : "✕"}
+          </span>
+        </div>
+
+        <div class="condition">
+          <span>السعر فوق EMA50</span>
+          <span class="check">
+            ${s.price>s.ema50 ? "✓" : "✕"}
+          </span>
+        </div>
+
+        <div class="condition">
+          <span>RSI أعلى من 40</span>
+          <span class="check">
+            ${s.rsi>=40 ? "✓" : "✕"}
+          </span>
+        </div>
+
+        <div class="condition">
+          <span>MACD إيجابي</span>
+          <span class="check">
+            ${s.macd>0 ? "✓" : "✕"}
+          </span>
+        </div>
+
+      </div>
+
+      <div class="note">
+        تاريخ التقسيم والبيانات الحالية في هذه النسخة تجريبية.
+        سيتم لاحقًا ربط الموقع بمصدر بيانات حقيقي.
+      </div>
+
+      <div style="padding:0 16px 18px">
+        <button
+          onclick="removeStock('${ticker}')"
+          style="background:#d94b4b;width:100%;padding:12px">
+          إزالة ${ticker}
+        </button>
+      </div>
+
+    </div>
+
+    `;
+
+  }).join("");
+
+}
+
+render();
+
+</script>
+
+</body>
+</html>
