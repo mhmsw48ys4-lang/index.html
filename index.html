@@ -1,523 +1,826 @@
-exports.handler = async (event) => {
-  const headers = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Content-Type": "application/json; charset=utf-8"
-  };
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>مراقب استراتيجية الارتكاز</title>
 
-  if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 204, headers, body: "" };
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial;
+  background:#f4f6f8;
+  color:#18202a;
+}
+header{
+  background:#101820;
+  color:white;
+  padding:22px 16px;
+  text-align:center;
+}
+header h1{margin:0;font-size:25px}
+header p{margin:7px 0 0;color:#aeb8c2;font-size:14px}
+
+.container{
+  max-width:900px;
+  margin:auto;
+  padding:18px;
+}
+
+.search{
+  background:white;
+  border-radius:16px;
+  padding:15px;
+  box-shadow:0 3px 15px #00000012;
+  display:flex;
+  gap:10px;
+}
+.search input{
+  flex:1;
+  min-width:0;
+  border:1px solid #d8dee5;
+  border-radius:12px;
+  padding:14px;
+  font-size:18px;
+  direction:ltr;
+  text-transform:uppercase;
+}
+.search button{
+  border:0;
+  border-radius:12px;
+  background:#168447;
+  color:white;
+  padding:0 22px;
+  font-size:17px;
+  font-weight:bold;
+}
+
+#status{
+  margin:14px 0;
+  text-align:center;
+  font-size:14px;
+  color:#68727d;
+}
+
+.card{
+  background:white;
+  border-radius:18px;
+  padding:18px;
+  margin-top:18px;
+  box-shadow:0 3px 18px #00000012;
+}
+
+.cardHead{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  border-bottom:1px solid #edf0f2;
+  padding-bottom:14px;
+  margin-bottom:14px;
+}
+.symbol{
+  font-size:26px;
+  font-weight:800;
+  direction:ltr;
+}
+.price{
+  font-size:28px;
+  font-weight:800;
+  direction:ltr;
+}
+.date{
+  color:#78838d;
+  font-size:12px;
+}
+
+.grid{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:10px;
+}
+
+.box{
+  background:#f7f9fa;
+  border-radius:12px;
+  padding:13px;
+}
+.label{
+  font-size:12px;
+  color:#707b86;
+  margin-bottom:5px;
+}
+.value{
+  font-size:18px;
+  font-weight:700;
+  direction:ltr;
+}
+
+.section{
+  margin-top:18px;
+  border-top:1px solid #edf0f2;
+  padding-top:15px;
+}
+.section h3{
+  margin:0 0 12px;
+  font-size:17px;
+}
+
+.stability{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  background:#f7f9fa;
+  border-radius:12px;
+  padding:14px;
+}
+.stableNumber{
+  font-size:24px;
+  font-weight:800;
+}
+.good{color:#168447}
+.bad{color:#c62828}
+
+.conditions{
+  display:grid;
+  gap:8px;
+}
+.condition{
+  padding:10px 12px;
+  border-radius:10px;
+  background:#f7f9fa;
+  display:flex;
+  justify-content:space-between;
+  font-size:14px;
+}
+.ok{color:#168447;font-weight:bold}
+.no{color:#c62828;font-weight:bold}
+
+.remove{
+  margin-top:14px;
+  width:100%;
+  border:0;
+  background:#fff0f0;
+  color:#c62828;
+  padding:10px;
+  border-radius:10px;
+  font-weight:bold;
+}
+
+.empty{
+  text-align:center;
+  color:#78838d;
+  padding:35px 10px;
+}
+
+@media(max-width:600px){
+  .container{padding:12px}
+  .grid{grid-template-columns:1fr 1fr}
+  .search button{padding:0 16px}
+  .price{font-size:24px}
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>مراقب استراتيجية الارتكاز</h1>
+  <p>بيانات السهم • الارتكاز • الثبات • المؤشرات</p>
+</header>
+
+<div class="container">
+
+  <div class="search">
+    <input id="ticker" placeholder="اكتب رمز السهم مثل NTCL">
+    <button onclick="addStock()">إضافة</button>
+  </div>
+
+  <div id="status">اكتب رمز السهم ثم اضغط إضافة</div>
+
+  <div id="stocks"></div>
+
+</div>
+
+<script>
+
+const stocks = {};
+
+function num(x, d=2){
+  if(x === null || x === undefined || Number.isNaN(Number(x))) return "--";
+  return Number(x).toFixed(d);
+}
+
+function ema(values, period){
+  if(values.length < period) return null;
+
+  let sum = 0;
+  for(let i=0;i<period;i++) sum += values[i];
+  let e = sum / period;
+
+  const k = 2/(period+1);
+
+  for(let i=period;i<values.length;i++){
+    e = values[i] * k + e * (1-k);
   }
 
-  const symbol = (
-    event.queryStringParameters?.symbol || ""
-  ).trim().toUpperCase();
+  return e;
+}
 
-  if (!symbol) {
-    return send(400, { error: "اكتب رمز السهم" });
+function rsi(values, period=14){
+  if(values.length <= period) return null;
+
+  let gain=0, loss=0;
+
+  for(let i=1;i<=period;i++){
+    const change=values[i]-values[i-1];
+    if(change>0) gain+=change;
+    else loss+=Math.abs(change);
   }
 
-  const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
+  let avgGain=gain/period;
+  let avgLoss=loss/period;
 
-  if (!apiKey) {
-    return send(500, {
-      error: "مفتاح Alpha Vantage غير موجود في Netlify"
-    });
+  for(let i=period+1;i<values.length;i++){
+    const change=values[i]-values[i-1];
+
+    const g=change>0?change:0;
+    const l=change<0?Math.abs(change):0;
+
+    avgGain=((avgGain*(period-1))+g)/period;
+    avgLoss=((avgLoss*(period-1))+l)/period;
   }
 
-  try {
-    // =========================
-    // جلب الأسعار اليومية
-    // =========================
+  if(avgLoss===0) return 100;
 
-    const url =
-      "https://www.alphavantage.co/query" +
-      "?function=TIME_SERIES_DAILY" +
-      "&symbol=" + encodeURIComponent(symbol) +
-      "&outputsize=compact" +
-      "&apikey=" + encodeURIComponent(apiKey);
+  const rs=avgGain/avgLoss;
+  return 100-(100/(1+rs));
+}
 
-    const res = await fetch(url);
-    const data = await res.json();
+function macd(values){
+  if(values.length < 35) return null;
 
-    if (data["Error Message"]) {
-      return send(404, {
-        error: "رمز السهم غير صحيح أو غير موجود"
-      });
-    }
+  const fast=[];
+  const slow=[];
 
-    if (data["Note"] || data["Information"]) {
-      return send(429, {
-        error:
-          "تم الوصول إلى حد طلبات Alpha Vantage. حاول بعد قليل."
-      });
-    }
+  let ef=null;
+  let es=null;
 
-    const raw = data["Time Series (Daily)"];
+  const kf=2/(12+1);
+  const ks=2/(26+1);
 
-    if (!raw) {
-      return send(502, {
-        error: "لم تصل بيانات الأسعار من Alpha Vantage",
-        details: data
-      });
-    }
+  for(let i=0;i<values.length;i++){
 
-    // =========================
-    // تحويل البيانات
-    // =========================
+    if(ef===null) ef=values[i];
+    else ef=values[i]*kf+ef*(1-kf);
 
-    const rows = Object.entries(raw)
-      .map(([date, v]) => ({
-        date,
-        open: Number(v["1. open"]),
-        high: Number(v["2. high"]),
-        low: Number(v["3. low"]),
-        close: Number(v["4. close"]),
-        volume: Number(v["5. volume"])
-      }))
-      .filter(x =>
-        Number.isFinite(x.close) &&
-        Number.isFinite(x.low) &&
-        Number.isFinite(x.high)
-      )
-      .sort((a, b) =>
-        a.date.localeCompare(b.date)
-      );
+    if(es===null) es=values[i];
+    else es=values[i]*ks+es*(1-ks);
 
-    const latest = rows[rows.length - 1];
-    const previous = rows[rows.length - 2] || latest;
-
-    const closes = rows.map(x => x.close);
-
-    // =========================
-    // EMA
-    // =========================
-
-    function ema(values, period) {
-      if (!values.length) return null;
-
-      const k = 2 / (period + 1);
-      let e = values[0];
-
-      for (let i = 1; i < values.length; i++) {
-        e =
-          values[i] * k +
-          e * (1 - k);
-      }
-
-      return e;
-    }
-
-    const EMA20 = ema(closes, 20);
-    const EMA30 = ema(closes, 30);
-    const EMA50 = ema(closes, 50);
-
-    // =========================
-    // RSI 14
-    // =========================
-
-    function RSI(values, period = 14) {
-      if (values.length <= period) return null;
-
-      let gain = 0;
-      let loss = 0;
-
-      for (let i = 1; i <= period; i++) {
-        const change =
-          values[i] - values[i - 1];
-
-        if (change > 0) {
-          gain += change;
-        } else {
-          loss += Math.abs(change);
-        }
-      }
-
-      let avgGain = gain / period;
-      let avgLoss = loss / period;
-
-      for (
-        let i = period + 1;
-        i < values.length;
-        i++
-      ) {
-        const change =
-          values[i] - values[i - 1];
-
-        const g =
-          change > 0 ? change : 0;
-
-        const l =
-          change < 0 ? Math.abs(change) : 0;
-
-        avgGain =
-          ((avgGain * (period - 1)) + g) /
-          period;
-
-        avgLoss =
-          ((avgLoss * (period - 1)) + l) /
-          period;
-      }
-
-      if (avgLoss === 0) return 100;
-
-      const rs = avgGain / avgLoss;
-
-      return 100 - 100 / (1 + rs);
-    }
-
-    const rsi14 = RSI(closes);
-
-    // =========================
-    // MACD
-    // =========================
-
-    function emaSeries(values, period) {
-      if (!values.length) return [];
-
-      const k = 2 / (period + 1);
-      let e = values[0];
-      const result = [e];
-
-      for (let i = 1; i < values.length; i++) {
-        e =
-          values[i] * k +
-          e * (1 - k);
-
-        result.push(e);
-      }
-
-      return result;
-    }
-
-    const e12 = emaSeries(closes, 12);
-    const e26 = emaSeries(closes, 26);
-
-    const macdSeries = closes.map(
-      (_, i) => e12[i] - e26[i]
-    );
-
-    const signalSeries =
-      emaSeries(macdSeries, 9);
-
-    const macd = macdSeries.at(-1);
-    const previousMacd =
-      macdSeries.at(-2) ?? macd;
-
-    const macdSignal =
-      signalSeries.at(-1);
-
-    // =========================
-    // Volume / RVOL
-    // =========================
-
-    const oldVolumes =
-      rows.slice(-21, -1);
-
-    const averageVolume20 =
-      oldVolumes.length
-        ? oldVolumes.reduce(
-            (s, x) => s + x.volume,
-            0
-          ) / oldVolumes.length
-        : latest.volume;
-
-    const rvol =
-      averageVolume20 > 0
-        ? latest.volume / averageVolume20
-        : 0;
-
-    // =========================
-    // أعلى قمة / أدنى قاع
-    // =========================
-
-    const lowest =
-      rows.reduce(
-        (a, b) =>
-          b.low < a.low ? b : a,
-        rows[0]
-      );
-
-    const highest =
-      rows.reduce(
-        (a, b) =>
-          b.high > a.high ? b : a,
-        rows[0]
-      );
-
-    // =========================
-    // آخر Pivot Low
-    // =========================
-
-    let pivot = null;
-
-    const start =
-      Math.max(1, rows.length - 60);
-
-    for (
-      let i = start;
-      i < rows.length - 1;
-      i++
-    ) {
-      if (
-        rows[i].low <= rows[i - 1].low &&
-        rows[i].low <= rows[i + 1].low
-      ) {
-        pivot = {
-          price: rows[i].low,
-          date: rows[i].date,
-          index: i
-        };
-      }
-    }
-
-    if (!pivot) {
-      pivot = {
-        price: lowest.low,
-        date: lowest.date,
-        index: rows.indexOf(lowest)
-      };
-    }
-
-    // =========================
-    // ثبات القاع
-    // المطلوب 4 أيام
-    //
-    // يوم القاع = البداية
-    // اليوم الذي بعده = أول يوم ثبات
-    // إذا Low كسر القاع = إعادة العد
-    // =========================
-
-    let stabilityDays = 0;
-    let restarted = false;
-
-    for (
-      let i = pivot.index + 1;
-      i < rows.length;
-      i++
-    ) {
-      if (rows[i].low < pivot.price) {
-
-        pivot = {
-          price: rows[i].low,
-          date: rows[i].date,
-          index: i
-        };
-
-        stabilityDays = 0;
-        restarted = true;
-
-      } else {
-
-        stabilityDays++;
-      }
-    }
-
-    const required = 4;
-
-    const complete =
-      stabilityDays >= required;
-
-    const remaining =
-      Math.max(
-        0,
-        required - stabilityDays
-      );
-
-    // =========================
-    // الارتداد
-    // =========================
-
-    const bounce =
-      pivot.price > 0
-        ? (
-            (latest.close - pivot.price) /
-            pivot.price
-          ) * 100
-        : 0;
-
-    // =========================
-    // شروط الارتكاز
-    // =========================
-
-    const distance =
-      pivot.price > 0
-        ? (
-            (latest.close - pivot.price) /
-            pivot.price
-          ) * 100
-        : 0;
-
-    const conditions = {
-
-      rsiLow:
-        rsi14 !== null &&
-        rsi14 >= 23 &&
-        rsi14 <= 27,
-
-      supportNear:
-        distance >= 0 &&
-        distance <= 10,
-
-      positiveCandle:
-        latest.close > latest.open,
-
-      macdImproving:
-        macd > previousMacd,
-
-      aboveEMA20:
-        latest.close > EMA20,
-
-      aboveEMA30:
-        latest.close > EMA30,
-
-      aboveEMA50:
-        latest.close > EMA50,
-
-      volumeImproving:
-        rvol >= 1.2,
-
-      stabilityFourDays:
-        complete
-    };
-
-    const score =
-      Object.values(conditions)
-        .filter(Boolean).length;
-
-    // =========================
-    // النتيجة
-    // =========================
-
-    return send(200, {
-
-      // مهم جدًا للواجهة الحالية
-      data: data,
-
-      symbol,
-
-      latest,
-
-      previous,
-
-      lowest: {
-        price: lowest.low,
-        date: lowest.date
-      },
-
-      highest: {
-        price: highest.high,
-        date: highest.date
-      },
-
-      pivot: {
-        price: pivot.price,
-        date: pivot.date,
-        bouncePercent:
-          Number(bounce.toFixed(2)),
-        score,
-        total:
-          Object.keys(conditions).length,
-        conditions
-      },
-
-      stability: {
-        pivotLow: pivot.price,
-        pivotDate: pivot.date,
-
-        // الواجهة تعرض 4 كحد أقصى
-        count:
-          Math.min(
-            stabilityDays,
-            4
-          ),
-
-        actualCount:
-          stabilityDays,
-
-        required: 4,
-
-        remaining,
-
-        complete,
-
-        brokenAndRestarted:
-          restarted
-      },
-
-      indicators: {
-        ema20: EMA20,
-        ema30: EMA30,
-        ema50: EMA50,
-
-        rsi14,
-
-        macd,
-
-        macdSignal,
-
-        macdHistogram:
-          macd - macdSignal,
-
-        volume:
-          latest.volume,
-
-        averageVolume20,
-
-        rvol
-      },
-
-      // التقسيمات والأخبار نضيفها
-      // بعد التأكد أن السعر والثبات يعملان
-      split: {
-        found: false,
-        date: null,
-        ratio: null,
-        daysSince: null
-      },
-
-      news: {
-        items: [],
-        status:
-          "سيتم ربط الأخبار لاحقًا"
-      },
-
-      series: rows
-    });
-
-  } catch (error) {
-
-    return send(500, {
-      error:
-        "حدث خطأ أثناء جلب بيانات السهم",
-      details:
-        error.message
-    });
+    fast.push(ef);
+    slow.push(es);
   }
-};
 
+  const line=fast.map((v,i)=>v-slow[i]);
 
-// =========================
-// JSON Response
-// =========================
-
-function send(statusCode, body) {
+  const signal=ema(line.slice(-9),9);
 
   return {
-    statusCode,
-
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers":
-        "Content-Type",
-      "Access-Control-Allow-Methods":
-        "GET, OPTIONS",
-      "Content-Type":
-        "application/json; charset=utf-8"
-    },
-
-    body:
-      JSON.stringify(body)
+    macd:line[line.length-1],
+    signal:signal,
+    positive:line[line.length-1] > 0
   };
 }
+
+/*
+  تحديد الارتكاز:
+  نبحث عن آخر قاع محلي واضح في آخر 60 جلسة.
+*/
+function findPivot(rows){
+
+  const start=Math.max(2,rows.length-60);
+
+  let pivot=null;
+
+  for(let i=start;i<rows.length-2;i++){
+
+    const a=rows[i-1].low;
+    const b=rows[i].low;
+    const c=rows[i+1].low;
+
+    if(b<=a && b<=c){
+
+      if(!pivot || rows[i].date > pivot.date){
+
+        pivot={
+          price:b,
+          date:rows[i].date,
+          index:i
+        };
+      }
+    }
+  }
+
+  if(!pivot){
+
+    let lowest=rows[start];
+
+    for(let i=start;i<rows.length;i++){
+      if(rows[i].low < lowest.low) lowest=rows[i];
+    }
+
+    pivot={
+      price:lowest.low,
+      date:lowest.date,
+      index:rows.indexOf(lowest)
+    };
+  }
+
+  return pivot;
+}
+
+/*
+  ثبات الارتكاز:
+  المطلوب 4 جلسات.
+  إذا Low كسر الارتكاز:
+  نبدأ من القاع الجديد.
+*/
+function calculateStability(rows){
+
+  let pivot=findPivot(rows);
+
+  let count=0;
+  let restarted=false;
+
+  for(let i=pivot.index+1;i<rows.length;i++){
+
+    if(rows[i].low < pivot.price){
+
+      pivot={
+        price:rows[i].low,
+        date:rows[i].date,
+        index:i
+      };
+
+      count=0;
+      restarted=true;
+
+    }else{
+
+      count++;
+    }
+  }
+
+  return {
+    price:pivot.price,
+    date:pivot.date,
+    count:Math.min(count,4),
+    complete:count>=4,
+    restarted:restarted
+  };
+}
+
+async function getStock(symbol){
+
+  /*
+    Yahoo Finance Chart API
+    لجلب آخر سنة من بيانات OHLCV
+  */
+
+  const url=
+    "https://query1.finance.yahoo.com/v8/finance/chart/"
+    +encodeURIComponent(symbol)
+    +"?range=1y&interval=1d&events=splits";
+
+  const response=await fetch(url);
+
+  if(!response.ok){
+    throw new Error("تعذر جلب بيانات السهم");
+  }
+
+  const json=await response.json();
+
+  if(!json.chart || !json.chart.result || !json.chart.result[0]){
+    throw new Error("رمز السهم غير صحيح أو لا توجد بيانات");
+  }
+
+  const result=json.chart.result[0];
+  const q=result.indicators.quote[0];
+
+  const rows=[];
+
+  for(let i=0;i<result.timestamp.length;i++){
+
+    if(
+      q.open[i]==null ||
+      q.high[i]==null ||
+      q.low[i]==null ||
+      q.close[i]==null
+    ) continue;
+
+    rows.push({
+      date:new Date(result.timestamp[i]*1000)
+        .toISOString()
+        .slice(0,10),
+
+      open:Number(q.open[i]),
+      high:Number(q.high[i]),
+      low:Number(q.low[i]),
+      close:Number(q.close[i]),
+      volume:Number(q.volume[i]||0)
+    });
+  }
+
+  if(rows.length<30){
+    throw new Error("البيانات غير كافية للتحليل");
+  }
+
+  const closes=rows.map(x=>x.close);
+
+  const latest=rows[rows.length-1];
+  const previous=rows[rows.length-2];
+
+  const ema20=ema(closes,20);
+  const ema30=ema(closes,30);
+  const ema50=ema(closes,50);
+
+  const rsi14=rsi(closes,14);
+  const m=macd(closes);
+
+  const pivot=findPivot(rows);
+  const stability=calculateStability(rows);
+
+  const bounce=
+    stability.price>0
+      ? ((latest.close-stability.price)/stability.price)*100
+      : null;
+
+  const recentVolumes=rows.slice(-20).map(x=>x.volume);
+  const avgVolume=
+    recentVolumes.reduce((a,b)=>a+b,0)/recentVolumes.length;
+
+  const rvol=
+    avgVolume>0
+      ? latest.volume/avgVolume
+      : null;
+
+  let splitDate=null;
+
+  if(result.events && result.events.splits){
+
+    const splits=Object.values(result.events.splits);
+
+    if(splits.length){
+
+      splits.sort((a,b)=>a.date-b.date);
+
+      splitDate=new Date(
+        splits[splits.length-1].date*1000
+      ).toISOString().slice(0,10);
+    }
+  }
+
+  let splitDays=null;
+
+  if(splitDate){
+
+    splitDays=Math.floor(
+      (new Date()-new Date(splitDate))
+      /(1000*60*60*24)
+    );
+  }
+
+  return {
+    symbol,
+    rows,
+    latest,
+    previous,
+    ema20,
+    ema30,
+    ema50,
+    rsi14,
+    macd:m,
+    pivot,
+    stability,
+    bounce,
+    rvol,
+    avgVolume,
+    splitDate,
+    splitDays
+  };
+}
+
+async function addStock(){
+
+  const input=document.getElementById("ticker");
+  const symbol=input.value.trim().toUpperCase();
+
+  if(!symbol){
+    document.getElementById("status").textContent=
+      "اكتب رمز السهم أولاً";
+    return;
+  }
+
+  const status=document.getElementById("status");
+
+  status.textContent="جاري جلب بيانات "+symbol+" ...";
+
+  try{
+
+    const data=await getStock(symbol);
+
+    stocks[symbol]=data;
+
+    input.value="";
+
+    renderStocks();
+
+    status.textContent=
+      "تم تحديث بيانات "+symbol;
+
+  }catch(error){
+
+    status.textContent=
+      "خطأ: "+error.message;
+  }
+}
+
+function removeStock(symbol){
+
+  delete stocks[symbol];
+
+  renderStocks();
+
+  if(Object.keys(stocks).length===0){
+
+    document.getElementById("status").textContent=
+      "اكتب رمز السهم ثم اضغط إضافة";
+  }
+}
+
+function renderStocks(){
+
+  const container=document.getElementById("stocks");
+
+  container.innerHTML="";
+
+  const list=Object.values(stocks);
+
+  if(list.length===0){
+
+    container.innerHTML=
+      '<div class="empty">لم تتم إضافة أي سهم</div>';
+
+    return;
+  }
+
+  list.forEach(s=>{
+
+    const x=s.latest;
+    const st=s.stability;
+    const m=s.macd;
+
+    const conditions=[
+      {
+        name:"السعر فوق EMA20",
+        ok:x.close>s.ema20
+      },
+      {
+        name:"السعر فوق EMA30",
+        ok:x.close>s.ema30
+      },
+      {
+        name:"السعر فوق EMA50",
+        ok:x.close>s.ema50
+      },
+      {
+        name:"RSI بين 23 و27",
+        ok:s.rsi14>=23 && s.rsi14<=27
+      },
+      {
+        name:"MACD يتحسن",
+        ok:m ? m.macd>m.signal : false
+      },
+      {
+        name:"حجم الارتداد جيد",
+        ok:s.rvol>=1.2
+      }
+    ];
+
+    const conditionHTML=conditions.map(c=>`
+
+      <div class="condition">
+
+        <span>${c.name}</span>
+
+        <span class="${c.ok?'ok':'no'}">
+          ${c.ok?'✓ متحقق':'✕ غير مكتمل'}
+        </span>
+
+      </div>
+
+    `).join("");
+
+    const stabilityClass=
+      st.complete ? "good":"bad";
+
+    const splitHTML=
+      s.splitDate
+        ? `
+          <div class="box">
+            <div class="label">آخر تقسيم</div>
+            <div class="value">${s.splitDate}</div>
+          </div>
+
+          <div class="box">
+            <div class="label">الأيام منذ التقسيم</div>
+            <div class="value">${s.splitDays} يوم</div>
+          </div>
+        `
+        :
+        `
+          <div class="box">
+            <div class="label">التقسيم</div>
+            <div class="value">لا يوجد</div>
+          </div>
+        `;
+
+    const card=document.createElement("div");
+
+    card.className="card";
+
+    card.innerHTML=`
+
+      <div class="cardHead">
+
+        <div>
+          <div class="symbol">${s.symbol}</div>
+          <div class="date">${x.date}</div>
+        </div>
+
+        <div class="price">$${num(x.close)}</div>
+
+      </div>
+
+      <div class="grid">
+
+        <div class="box">
+          <div class="label">الافتتاح</div>
+          <div class="value">$${num(x.open)}</div>
+        </div>
+
+        <div class="box">
+          <div class="label">آخر إغلاق</div>
+          <div class="value">$${num(x.close)}</div>
+        </div>
+
+        <div class="box">
+          <div class="label">أعلى سعر</div>
+          <div class="value">$${num(x.high)}</div>
+        </div>
+
+        <div class="box">
+          <div class="label">أدنى سعر</div>
+          <div class="value">$${num(x.low)}</div>
+        </div>
+
+        <div class="box">
+          <div class="label">EMA20</div>
+          <div class="value">${num(s.ema20)}</div>
+        </div>
+
+        <div class="box">
+          <div class="label">EMA30</div>
+          <div class="value">${num(s.ema30)}</div>
+        </div>
+
+        <div class="box">
+          <div class="label">EMA50</div>
+          <div class="value">${num(s.ema50)}</div>
+        </div>
+
+        <div class="box">
+          <div class="label">RSI14</div>
+          <div class="value">${num(s.rsi14)}</div>
+        </div>
+
+        <div class="box">
+          <div class="label">MACD</div>
+          <div class="value">
+            ${m ? num(m.macd,4) : "--"}
+          </div>
+        </div>
+
+        <div class="box">
+          <div class="label">Volume</div>
+          <div class="value">
+            ${Math.round(x.volume).toLocaleString()}
+          </div>
+        </div>
+
+        <div class="box">
+          <div class="label">RVOL</div>
+          <div class="value">
+            ${num(s.rvol)}
+          </div>
+        </div>
+
+        ${splitHTML}
+
+      </div>
+
+      <div class="section">
+
+        <h3>الارتكاز والثبات</h3>
+
+        <div class="stability">
+
+          <div>
+            <div class="label">آخر ارتكاز</div>
+            <div class="stableNumber">
+              $${num(st.price,3)}
+            </div>
+            <div class="date">
+              ${st.date}
+            </div>
+          </div>
+
+          <div style="text-align:left">
+
+            <div class="label">ثبات الارتكاز</div>
+
+            <div class="stableNumber ${stabilityClass}">
+              ${st.count}/4
+            </div>
+
+            <div class="date">
+              ${st.complete
+                ?"مكتمل"
+                :(4-st.count)+" أيام متبقية"}
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+      <div class="section">
+
+        <h3>الارتداد من الارتكاز</h3>
+
+        <div class="grid">
+
+          <div class="box">
+            <div class="label">الارتداد</div>
+            <div class="value">
+              ${num(s.bounce)}%
+            </div>
+          </div>
+
+          <div class="box">
+            <div class="label">حجم التداول</div>
+            <div class="value">
+              ${num(s.rvol)} RVOL
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <div class="section">
+
+        <h3>شروط المتابعة</h3>
+
+        <div class="conditions">
+          ${conditionHTML}
+        </div>
+
+      </div>
+
+      <button class="remove"
+        onclick="removeStock('${s.symbol}')">
+        حذف السهم
+      </button>
+
+    `;
+
+    container.appendChild(card);
+
+  });
+}
+
+document.getElementById("ticker")
+.addEventListener("keydown",function(e){
+
+  if(e.key==="Enter"){
+    addStock();
+  }
+
+});
+
+</script>
+
+</body>
+</html>
