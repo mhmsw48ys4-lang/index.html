@@ -6,7 +6,6 @@ exports.handler = async (event) => {
   };
 
   try {
-    // السماح بطلبات OPTIONS
     if (event.httpMethod === "OPTIONS") {
       return {
         statusCode: 204,
@@ -15,7 +14,6 @@ exports.handler = async (event) => {
       };
     }
 
-    // قراءة رمز السهم
     const symbol = event.queryStringParameters?.symbol
       ?.trim()
       .toUpperCase();
@@ -30,7 +28,6 @@ exports.handler = async (event) => {
       };
     }
 
-    // قراءة مفتاح Alpha Vantage من Netlify Environment Variables
     const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
 
     if (!apiKey) {
@@ -43,12 +40,11 @@ exports.handler = async (event) => {
       };
     }
 
-    // طلب البيانات اليومية
     const url =
       "https://www.alphavantage.co/query" +
-      "?function=TIME_SERIES_DAILY_ADJUSTED" +
+      "?function=TIME_SERIES_DAILY" +
       "&symbol=" + encodeURIComponent(symbol) +
-      "&outputsize=full" +
+      "&outputsize=compact" +
       "&apikey=" + encodeURIComponent(apiKey);
 
     const response = await fetch(url);
@@ -66,7 +62,6 @@ exports.handler = async (event) => {
 
     const data = await response.json();
 
-    // السهم غير موجود
     if (data["Error Message"]) {
       return {
         statusCode: 404,
@@ -78,7 +73,6 @@ exports.handler = async (event) => {
       };
     }
 
-    // تجاوز الحد
     if (data["Note"]) {
       return {
         statusCode: 429,
@@ -90,7 +84,6 @@ exports.handler = async (event) => {
       };
     }
 
-    // لم تصل بيانات الأسعار
     if (!data["Time Series (Daily)"]) {
       return {
         statusCode: 502,
@@ -103,7 +96,6 @@ exports.handler = async (event) => {
       };
     }
 
-    // إرسال البيانات للموقع
     return {
       statusCode: 200,
       headers,
