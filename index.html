@@ -340,11 +340,10 @@ const demoData = {
 };
 
 let stocks=[];
+async function addStock(){
 
-function addStock(){
-
-  const input=document.getElementById("ticker");
-  const ticker=input.value.trim().toUpperCase();
+  const input = document.getElementById("ticker");
+  const ticker = input.value.trim().toUpperCase();
 
   if(!ticker){
     alert("اكتب رمز السهم أولاً");
@@ -357,11 +356,153 @@ function addStock(){
   }
 
   stocks.push(ticker);
-  input.value="";
-  render();
+  input.value = "";
 
+  try{
+
+    const response = await fetch(
+      "/.netlify/functions/stock?symbol=" +
+      encodeURIComponent(ticker)
+    );
+
+    const result = await response.json();
+
+    if(!response.ok){
+      throw new Error(result.error || "تعذر جلب بيانات السهم");
+    }
+
+    const series = result.data["Time Series (Daily)"];
+
+    const dates = Object.keys(series).sort().reverse();
+
+    const latestDate = dates[0];
+    const latest = series[latestDate];
+
+    const price = Number(latest["4. close"]);
+    const volume = Number(latest["5. volume"]);
+
+    const recent = dates.slice(0,30);
+
+    const lows = recent.map(d =>
+      Number(series[d]["3. low"])
+    );
+
+    const highs = recent.map(d =>
+      Number(series[d]["2. high"])
+    );
+
+    const low = Math.min(...lows);
+    const high = Math.max(...highs);
+
+    const bounce = low > 0
+      ? ((price - low) / low) * 100
+      : 0;
+
+    const closes = dates
+      .slice(0,60)
+      .reverse()
+      .map(d => Number(series[d]["4. close"]));
+
+    function EMA(values, period){
+
+      if(values.length < period){
+        return values[values.length - 1];
+      }
+
+      let ema =
+        values.slice(0,period)
+        .reduce((a,b) => a+b,0) / period;
+
+      const k = 2 / (period + 1);
+
+      for(let i=period;i<values.length;i++){
+        ema = values[i] * k + ema * (1-k);
+      }
+
+      return ema;
+    }
+
+    const ema20 = EMA(closes,20);
+    const ema30 = EMA(closes,30);
+    const ema50 = EMA(closes,50);
+
+    let gains = 0;
+    let losses = 0;
+
+    for(let i=1;i<closes.length;i++){
+
+      const change = closes[i] - closes[i-1];
+
+      if(change > 0){
+        gains += change;
+      }else{
+        losses += Math.abs(change);
+      }
+    }
+
+    const avgGain = gains / Math.max(1,closes.length-1);
+    const avgLoss = losses / Math.max(1,closes.length-1);
+
+    const rs = avgLoss === 0
+      ? 100
+      : avgGain / avgLoss;
+
+    const rsi = 100 - (100 / (1 + rs));
+
+    const volumeText =
+      volume >= 1000000
+      ? (volume/1000000).toFixed(2) + "M"
+      : (volume/1000).toFixed(0) + "K";
+
+    demoData[ticker] = {
+
+      name: ticker,
+
+      price: Number(price.toFixed(4)),
+
+      low: Number(low.toFixed(4)),
+
+      high: Number(high.toFixed(4)),
+
+      bounce: Number(bounce.toFixed(2)),
+
+      ema20: Number(ema20.toFixed(4)),
+
+      ema30: Number(ema30.toFixed(4)),
+
+      ema50: Number(ema50.toFixed(4)),
+
+      rsi: Number(rsi.toFixed(2)),
+
+      macd: 0,
+
+      volume: volumeText,
+
+      rvol: "—",
+
+      stable: 0,
+
+      required: 5,
+
+      split: "—",
+
+      splitDate: "—"
+    };
+
+    render();
+
+  }catch(error){
+
+    stocks = stocks.filter(x => x !== ticker);
+
+    alert(
+      "تعذر جلب بيانات " +
+      ticker +
+      "\n\n" +
+      error.message
+    );
+  }
 }
-
 function removeStock(ticker){
 
   stocks=stocks.filter(x=>x!==ticker);
