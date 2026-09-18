@@ -7,11 +7,7 @@ exports.handler = async (event) => {
   };
 
   if (event.httpMethod === "OPTIONS") {
-    return {
-      statusCode: 204,
-      headers,
-      body: ""
-    };
+    return { statusCode: 204, headers, body: "" };
   }
 
   try {
@@ -47,13 +43,13 @@ exports.handler = async (event) => {
       return await r.json();
     }
 
-    // ==========================================
-    // الأسعار اليومية - مجاني
-    // ==========================================
+    // =====================================
+    // الأسعار اليومية
+    // =====================================
 
     const daily = await av({
       function: "TIME_SERIES_DAILY",
-      symbol: symbol,
+      symbol,
       outputsize: "compact"
     });
 
@@ -66,7 +62,7 @@ exports.handler = async (event) => {
     if (daily["Note"] || daily["Information"]) {
       return send(429, {
         error:
-          "Alpha Vantage وصل إلى حد الطلبات. حاول بعد قليل."
+          "تم الوصول إلى حد Alpha Vantage. حاول بعد قليل."
       });
     }
 
@@ -78,10 +74,6 @@ exports.handler = async (event) => {
         details: daily
       });
     }
-
-    // ==========================================
-    // تحويل الأسعار
-    // ==========================================
 
     const rows = Object.entries(raw)
       .map(([date, v]) => ({
@@ -103,30 +95,29 @@ exports.handler = async (event) => {
         a.date.localeCompare(b.date)
       );
 
-    if (!rows.length) {
+    if (rows.length < 30) {
       return send(502, {
-        error: "بيانات السهم فارغة"
+        error: "بيانات تاريخية غير كافية للسهم"
       });
     }
 
     const latest = rows[rows.length - 1];
-    const previous =
-      rows.length > 1
-        ? rows[rows.length - 2]
-        : latest;
+    const previous = rows[rows.length - 2];
 
     const closes = rows.map(x => x.close);
 
-    // ==========================================
+    // =====================================
     // EMA
-    // ==========================================
+    // =====================================
 
     function emaSeries(values, period) {
-      if (!values.length) return [];
+      const result = [];
+      if (!values.length) return result;
 
       const k = 2 / (period + 1);
       let value = values[0];
-      const result = [value];
+
+      result.push(value);
 
       for (let i = 1; i < values.length; i++) {
         value =
@@ -145,29 +136,33 @@ exports.handler = async (event) => {
     const ema50 = emaSeries(closes, 50);
     const ema26 = emaSeries(closes, 26);
 
-    // ==========================================
+    const EMA20 = ema20.at(-1);
+    const EMA30 = ema30.at(-1);
+    const EMA50 = ema50.at(-1);
+
+    // =====================================
     // RSI 14
-    // ==========================================
+    // =====================================
 
     function calculateRSI(values, period = 14) {
       if (values.length <= period) return null;
 
-      let gain = 0;
-      let loss = 0;
+      let gains = 0;
+      let losses = 0;
 
       for (let i = 1; i <= period; i++) {
         const change =
           values[i] - values[i - 1];
 
         if (change >= 0) {
-          gain += change;
+          gains += change;
         } else {
-          loss += Math.abs(change);
+          losses += Math.abs(change);
         }
       }
 
-      let avgGain = gain / period;
-      let avgLoss = loss / period;
+      let avgGain = gains / period;
+      let avgLoss = losses / period;
 
       for (
         let i = period + 1;
@@ -177,16 +172,18 @@ exports.handler = async (event) => {
         const change =
           values[i] - values[i - 1];
 
-        const g = change > 0 ? change : 0;
-        const l =
+        const gain =
+          change > 0 ? change : 0;
+
+        const loss =
           change < 0 ? Math.abs(change) : 0;
 
         avgGain =
-          ((avgGain * (period - 1)) + g) /
+          ((avgGain * (period - 1)) + gain) /
           period;
 
         avgLoss =
-          ((avgLoss * (period - 1)) + l) /
+          ((avgLoss * (period - 1)) + loss) /
           period;
       }
 
@@ -194,15 +191,15 @@ exports.handler = async (event) => {
 
       const rs = avgGain / avgLoss;
 
-      return 100 - 100 / (1 + rs);
+      return 100 - (100 / (1 + rs));
     }
 
     const rsi14 =
       calculateRSI(closes, 14);
 
-    // ==========================================
+    // =====================================
     // MACD
-    // ==========================================
+    // =====================================
 
     const macdSeries = closes.map(
       (_, i) =>
@@ -212,44 +209,162 @@ exports.handler = async (event) => {
     const signalSeries =
       emaSeries(macdSeries, 9);
 
-    const macd =
-      macdSeries[macdSeries.length - 1];
-
+    const macd = macdSeries.at(-1);
     const previousMacd =
-      macdSeries.length > 1
-        ? macdSeries[macdSeries.length - 2]
-        : macd;
+      macdSeries.at(-2) ?? macd;
 
     const macdSignal =
-      signalSeries[signalSeries.length - 1];
+      signalSeries.at(-1);
 
     const macdHistogram =
       macd - macdSignal;
 
-    // ==========================================
-    // Volume + RVOL
-    // ==========================================
+    // =====================================
+    // Volume / RVOL
+    // =====================================
 
-    const last20 =
+    const previous20 =
       rows.slice(-21, -1);
 
     const averageVolume20 =
-      last20.length
-        ? last20.reduce(
+      previous20.length
+        ? previous20.reduce(
             (sum, x) => sum + x.volume,
             0
-          ) / last20.length
+          ) / previous20.length
         : latest.volume;
 
     const rvol =
       averageVolume20 > 0
-        ? latest.volume /
-          averageVolume20
+        ? latest.volume / averageVolume20
         : 0;
 
-    // ==========================================
-    // أعلى وأدنى سعر
-    // ==========================================
+    // =====================================
+    // البحث عن آخر قاع ارتكاز
+    // =====================================
+
+    function findLastPivotLow(data) {
+      const start =
+        Math.max(1, data.length - 60);
+
+      let candidate = null;
+
+      for (
+        let i = start;
+        i < data.length - 1;
+        i++
+      ) {
+        const left = data[i - 1].low;
+        const current = data[i].low;
+        const right = data[i + 1].low;
+
+        if (
+          current <= left &&
+          current <= right
+        ) {
+          candidate = {
+            price: current,
+            date: data[i].date,
+            index: i
+          };
+        }
+      }
+
+      if (candidate) {
+        return candidate;
+      }
+
+      // إذا لم توجد قمة/قاع محلي واضح
+      let minIndex = start;
+
+      for (
+        let i = start + 1;
+        i < data.length;
+        i++
+      ) {
+        if (
+          data[i].low <
+          data[minIndex].low
+        ) {
+          minIndex = i;
+        }
+      }
+
+      return {
+        price: data[minIndex].low,
+        date: data[minIndex].date,
+        index: minIndex
+      };
+    }
+
+    let pivot =
+      findLastPivotLow(rows);
+
+    // =====================================
+    // ثبات الارتكاز
+    //
+    // يوم القاع = بداية الارتكاز
+    // الأيام التي بعده ولا تكسر Low = ثبات
+    // كسر Low = قاع جديد وإعادة العد
+    // المطلوب = 4 أيام
+    // =====================================
+
+    let stabilityDays = 0;
+    let restarted = false;
+
+    for (
+      let i = pivot.index + 1;
+      i < rows.length;
+      i++
+    ) {
+      const candle = rows[i];
+
+      // كسر القاع الحقيقي باستخدام Low
+      if (candle.low < pivot.price) {
+
+        pivot = {
+          price: candle.low,
+          date: candle.date,
+          index: i
+        };
+
+        stabilityDays = 0;
+        restarted = true;
+
+      } else {
+
+        stabilityDays++;
+      }
+    }
+
+    const requiredStabilityDays = 4;
+
+    const complete =
+      stabilityDays >=
+      requiredStabilityDays;
+
+    const remaining =
+      Math.max(
+        0,
+        requiredStabilityDays -
+        stabilityDays
+      );
+
+    // =====================================
+    // الارتداد من آخر قاع
+    // =====================================
+
+    const bouncePercent =
+      pivot.price > 0
+        ? (
+            (latest.close - pivot.price) /
+            pivot.price
+          ) * 100
+        : 0;
+
+    // =====================================
+    // أعلى وأدنى سعر في آخر 100 جلسة
+    // =====================================
 
     const lowest =
       rows.reduce(
@@ -265,93 +380,9 @@ exports.handler = async (event) => {
         rows[0]
       );
 
-    // ==========================================
-    // البحث عن آخر ارتكاز
-    // ==========================================
-
-    let pivot = null;
-
-    const start =
-      Math.max(1, rows.length - 60);
-
-    for (
-      let i = start;
-      i < rows.length - 1;
-      i++
-    ) {
-      if (
-        rows[i].low <= rows[i - 1].low &&
-        rows[i].low <= rows[i + 1].low
-      ) {
-        pivot = {
-          price: rows[i].low,
-          date: rows[i].date,
-          index: i
-        };
-      }
-    }
-
-    if (!pivot) {
-      pivot = {
-        price: lowest.low,
-        date: lowest.date,
-        index: rows.indexOf(lowest)
-      };
-    }
-
-    // ==========================================
-    // ثبات القاع 4 أيام
-    // إذا انكسر القاع يبدأ العد من جديد
-    // ==========================================
-
-    let stabilityCount = 1;
-    let restarted = false;
-
-    for (
-      let i = pivot.index + 1;
-      i < rows.length;
-      i++
-    ) {
-      if (rows[i].low < pivot.price) {
-        pivot = {
-          price: rows[i].low,
-          date: rows[i].date,
-          index: i
-        };
-
-        stabilityCount = 1;
-        restarted = true;
-      } else {
-        stabilityCount++;
-      }
-    }
-
-    const required = 4;
-
-    const stabilityComplete =
-      stabilityCount >= required;
-
-    const remaining =
-      Math.max(
-        0,
-        required - stabilityCount
-      );
-
-    // ==========================================
-    // نسبة الارتداد من القاع
-    // ==========================================
-
-    const bouncePercent =
-      pivot.price > 0
-        ? (
-            (latest.close - pivot.price) /
-            pivot.price
-          ) * 100
-        : 0;
-
-    // ==========================================
-    // شروط الارتكاز
-    // ==========================================
+    // =====================================
+    // شروط منهج الارتكاز
+    // =====================================
 
     const distanceFromPivot =
       pivot.price > 0
@@ -362,35 +393,45 @@ exports.handler = async (event) => {
         : 0;
 
     const conditions = {
+
+      // RSI قريب من منطقة 23 - 27
       rsiLow:
         rsi14 !== null &&
         rsi14 >= 23 &&
         rsi14 <= 27,
 
+      // السعر قريب من الدعم
       supportNear:
         distanceFromPivot >= 0 &&
         distanceFromPivot <= 10,
 
+      // شمعة إيجابية
       positiveCandle:
         latest.close > latest.open,
 
+      // MACD يتحسن
       macdImproving:
         macd > previousMacd,
 
+      // السعر فوق EMA20
       aboveEMA20:
-        latest.close > ema20[ema20.length - 1],
+        latest.close > EMA20,
 
+      // السعر فوق EMA30
       aboveEMA30:
-        latest.close > ema30[ema30.length - 1],
+        latest.close > EMA30,
 
+      // السعر فوق EMA50
       aboveEMA50:
-        latest.close > ema50[ema50.length - 1],
+        latest.close > EMA50,
 
+      // تحسن الفوليوم
       volumeImproving:
         rvol >= 1.2,
 
+      // اكتمال الثبات
       stabilityFourDays:
-        stabilityComplete
+        complete
     };
 
     const pivotScore =
@@ -401,9 +442,9 @@ exports.handler = async (event) => {
     const pivotTotal =
       Object.keys(conditions).length;
 
-    // ==========================================
+    // =====================================
     // التقسيمات
-    // ==========================================
+    // =====================================
 
     let split = {
       found: false,
@@ -413,23 +454,35 @@ exports.handler = async (event) => {
     };
 
     try {
-      const splitData = await av({
-        function: "SPLITS",
-        symbol: symbol
-      });
 
-      let list = [];
+      const splitResponse =
+        await av({
+          function: "SPLITS",
+          symbol
+        });
 
-      if (Array.isArray(splitData.data)) {
-        list = splitData.data;
+      let splitList = [];
+
+      if (
+        Array.isArray(
+          splitResponse.data
+        )
+      ) {
+        splitList =
+          splitResponse.data;
       }
 
-      if (Array.isArray(splitData.splits)) {
-        list = splitData.splits;
+      if (
+        Array.isArray(
+          splitResponse.splits
+        )
+      ) {
+        splitList =
+          splitResponse.splits;
       }
 
       const normalized =
-        list
+        splitList
           .map(x => ({
             date:
               x.date ||
@@ -448,19 +501,21 @@ exports.handler = async (event) => {
           );
 
       if (normalized.length) {
-        const s = normalized[0];
+
+        const s =
+          normalized[0];
 
         const splitDate =
           new Date(s.date);
 
-        const today =
+        const now =
           new Date();
 
         const todayUTC =
           Date.UTC(
-            today.getUTCFullYear(),
-            today.getUTCMonth(),
-            today.getUTCDate()
+            now.getUTCFullYear(),
+            now.getUTCMonth(),
+            now.getUTCDate()
           );
 
         const splitUTC =
@@ -486,29 +541,26 @@ exports.handler = async (event) => {
           daysSince
         };
       }
+
     } catch (e) {
-      split = {
-        found: false,
-        date: null,
-        ratio: null,
-        daysSince: null
-      };
+      // عدم وجود بيانات التقسيم
+      // لا يمنع ظهور بيانات السهم
     }
 
-    // ==========================================
+    // =====================================
     // النتيجة
-    // ==========================================
+    // =====================================
 
     return send(200, {
 
       // مهم للواجهة الحالية
       data: daily,
 
-      symbol: symbol,
+      symbol,
 
-      latest: latest,
+      latest,
 
-      previous: previous,
+      previous,
 
       lowest: {
         price: lowest.low,
@@ -523,53 +575,68 @@ exports.handler = async (event) => {
       pivot: {
         price: pivot.price,
         date: pivot.date,
+
         bouncePercent:
-          Number(bouncePercent.toFixed(2)),
+          Number(
+            bouncePercent.toFixed(2)
+          ),
+
         score: pivotScore,
         total: pivotTotal,
-        conditions: conditions
+
+        conditions
       },
 
+      // الثبات الصحيح: 4 أيام
       stability: {
         pivotLow: pivot.price,
         pivotDate: pivot.date,
-        count: stabilityCount,
-        required: required,
-        remaining: remaining,
-        complete: stabilityComplete,
-        brokenAndRestarted: restarted
+
+        count:
+          Math.min(
+            stabilityDays,
+            requiredStabilityDays
+          ),
+
+        actualCount:
+          stabilityDays,
+
+        required:
+          requiredStabilityDays,
+
+        remaining,
+
+        complete,
+
+        brokenAndRestarted:
+          restarted
       },
 
       indicators: {
-        ema20:
-          ema20[ema20.length - 1],
 
-        ema30:
-          ema30[ema30.length - 1],
+        ema20: EMA20,
 
-        ema50:
-          ema50[ema50.length - 1],
+        ema30: EMA30,
 
-        rsi14: rsi14,
+        ema50: EMA50,
 
-        macd: macd,
+        rsi14,
 
-        macdSignal: macdSignal,
+        macd,
 
-        macdHistogram:
-          macdHistogram,
+        macdSignal,
+
+        macdHistogram,
 
         volume:
           latest.volume,
 
-        averageVolume20:
-          averageVolume20,
+        averageVolume20,
 
-        rvol:
-          rvol
+        rvol
       },
 
-      split: split,
+      split,
 
       news: {
         items: [],
@@ -592,13 +659,14 @@ exports.handler = async (event) => {
 };
 
 
-// ==========================================
-// إرسال النتيجة
-// ==========================================
+// =====================================
+// إرسال JSON
+// =====================================
 
 function send(statusCode, body) {
+
   return {
-    statusCode: statusCode,
+    statusCode,
 
     headers: {
       "Access-Control-Allow-Origin": "*",
@@ -610,6 +678,7 @@ function send(statusCode, body) {
         "application/json; charset=utf-8"
     },
 
-    body: JSON.stringify(body)
+    body:
+      JSON.stringify(body)
   };
 }
