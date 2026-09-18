@@ -9,142 +9,67 @@
 *{box-sizing:border-box}
 
 body{
-  margin:0;
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial,sans-serif;
-  background:#07111f;
-  color:#fff;
+margin:0;
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial,sans-serif;
+background:#07111f;
+color:#fff
 }
 
 .header{
-  background:linear-gradient(135deg,#0b2035,#123d55);
-  padding:22px 16px 26px;
-  border-bottom:1px solid #24485f;
+background:linear-gradient(135deg,#0b2035,#123d55);
+padding:22px 16px 26px;
+border-bottom:1px solid #24485f
 }
 
-.header h1{
-  margin:0;
-  font-size:25px;
-  font-weight:800;
-}
+.header h1{margin:0;font-size:25px;font-weight:800}
+.header p{margin:7px 0 0;color:#9db5c6;font-size:14px}
 
-.header p{
-  margin:7px 0 0;
-  color:#9db5c6;
-  font-size:14px;
-}
+.container{max-width:900px;margin:auto;padding:18px 14px 50px}
 
-.container{
-  max-width:900px;
-  margin:auto;
-  padding:18px 14px 50px;
-}
-
-.search{
-  display:flex;
-  gap:8px;
-  margin-bottom:18px;
-}
+.search{display:flex;gap:8px;margin-bottom:15px}
 
 .search input{
-  flex:1;
-  min-width:0;
-  height:52px;
-  border-radius:14px;
-  border:1px solid #34536a;
-  background:#101f30;
-  color:#fff;
-  padding:0 16px;
-  font-size:18px;
-  outline:none;
-  text-transform:uppercase;
-}
-
-.search input::placeholder{
-  color:#71879a;
+flex:1;min-width:0;height:52px;border-radius:14px;
+border:1px solid #34536a;background:#101f30;color:#fff;
+padding:0 16px;font-size:18px;outline:none;text-transform:uppercase
 }
 
 .search button{
-  width:90px;
-  border:0;
-  border-radius:14px;
-  background:#18b981;
-  color:#fff;
-  font-size:17px;
-  font-weight:800;
+width:90px;border:0;border-radius:14px;
+background:#18b981;color:#fff;font-size:17px;font-weight:800
 }
 
-.search button:active{
-  transform:scale(.97);
-}
-
-.status{
-  min-height:20px;
-  margin:5px 4px 15px;
-  color:#91a8ba;
-  font-size:14px;
-}
+.status{min-height:20px;margin:5px 4px 15px;color:#91a8ba;font-size:14px}
 
 .card{
-  background:#0d1c2c;
-  border:1px solid #203b50;
-  border-radius:18px;
-  margin-bottom:16px;
-  overflow:hidden;
-  box-shadow:0 8px 30px rgba(0,0,0,.18);
+background:#0d1c2c;border:1px solid #203b50;
+border-radius:18px;margin-bottom:16px;overflow:hidden;
+box-shadow:0 8px 30px rgba(0,0,0,.18)
 }
 
 .cardHead{
-  padding:17px;
-  background:#102538;
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
+padding:17px;background:#102538;
+display:flex;justify-content:space-between;align-items:center
 }
 
-.symbol{
-  font-size:25px;
-  font-weight:900;
-}
-
-.date{
-  color:#8ea5b6;
-  font-size:12px;
-}
+.symbol{font-size:25px;font-weight:900}
+.date{color:#8ea5b6;font-size:12px}
 
 .priceBox{
-  padding:18px;
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:10px;
+padding:18px;display:grid;grid-template-columns:1fr 1fr;gap:10px
 }
 
-.bigPrice{
-  font-size:30px;
-  font-weight:900;
-}
-
-.label{
-  color:#839bad;
-  font-size:12px;
-  margin-bottom:5px;
-}
-
-.value{
-  font-size:17px;
-  font-weight:800;
-}
+.bigPrice{font-size:30px;font-weight:900}
+.label{color:#839bad;font-size:12px;margin-bottom:5px}
+.value{font-size:17px;font-weight:800}
 
 .grid{
-  display:grid;
-  grid-template-columns:repeat(2,1fr);
-  gap:10px;
-  padding:0 18px 18px;
+display:grid;grid-template-columns:repeat(2,1fr);
+gap:10px;padding:0 18px 18px
 }
 
 .item{
-  background:#102337;
-  border-radius:12px;
-  padding:13px;
+background:#102337;border-radius:12px;padding:13px
 }
 
 .green{color:#21d39a}
@@ -152,82 +77,46 @@ body{
 .yellow{color:#f3c95f}
 .blue{color:#68b9ff}
 
-.section{
-  padding:0 18px 18px;
-}
-
-.sectionTitle{
-  font-size:16px;
-  font-weight:900;
-  margin:4px 0 10px;
-}
+.section{padding:0 18px 18px}
+.sectionTitle{font-size:16px;font-weight:900;margin:4px 0 10px}
 
 .condition{
-  display:flex;
-  justify-content:space-between;
-  gap:10px;
-  padding:11px 12px;
-  margin-bottom:7px;
-  border-radius:10px;
-  background:#101f30;
-  color:#c7d5df;
-  font-size:13px;
+display:flex;justify-content:space-between;gap:10px;
+padding:11px 12px;margin-bottom:7px;border-radius:10px;
+background:#101f30;color:#c7d5df;font-size:13px
 }
 
-.badge{
-  white-space:nowrap;
-  font-weight:800;
+.badge{white-space:nowrap;font-weight:800}
+
+.box{
+margin:0 18px 18px;padding:15px;border-radius:14px;
+background:#122b36;border:1px solid #235866
 }
 
-.pivot{
-  margin:0 18px 18px;
-  padding:15px;
-  border-radius:14px;
-  background:#122b36;
-  border:1px solid #235866;
+.boxTitle{font-size:18px;font-weight:900;margin-bottom:10px}
+
+.row{
+display:flex;justify-content:space-between;
+padding:7px 0;color:#b9cbd5
 }
 
-.pivotTitle{
-  font-size:17px;
-  font-weight:900;
-  margin-bottom:10px;
-}
-
-.pivotRow{
-  display:flex;
-  justify-content:space-between;
-  padding:5px 0;
-  color:#b9cbd5;
-}
-
-.empty{
-  text-align:center;
-  padding:45px 15px;
-  color:#72899a;
-}
-
-.error{
-  background:#351923;
-  border:1px solid #713141;
-  color:#ff9ba7;
-  padding:14px;
-  border-radius:12px;
-  margin-bottom:15px;
-  line-height:1.7;
-}
+.row strong{color:#fff}
 
 .remove{
-  border:0;
-  background:#243849;
-  color:#91a6b6;
-  border-radius:8px;
-  padding:6px 9px;
+border:0;background:#243849;color:#91a6b6;
+border-radius:8px;padding:6px 9px
+}
+
+.empty{text-align:center;padding:45px 15px;color:#72899a}
+
+.error{
+background:#351923;border:1px solid #713141;
+color:#ff9ba7;padding:14px;border-radius:12px;
+margin-bottom:15px;line-height:1.7
 }
 
 @media(max-width:520px){
-  .grid{
-    grid-template-columns:1fr 1fr;
-  }
+.grid{grid-template-columns:1fr 1fr}
 }
 </style>
 </head>
@@ -235,54 +124,43 @@ body{
 <body>
 
 <div class="header">
-  <h1>مراقب استراتيجية الارتكاز</h1>
-  <p>تحليل السهم من البيانات اليومية ومراقبة الارتكاز والثبات</p>
+<h1>مراقب استراتيجية الارتكاز</h1>
+<p>تحليل السهم والارتكاز والتقسيم والقمة بعد التقسيم</p>
 </div>
 
 <div class="container">
 
-  <div class="search">
-    <input
-      id="symbolInput"
-      type="text"
-      placeholder="اكتب رمز السهم مثل NTCL"
-      autocomplete="off"
-      autocapitalize="characters"
-    >
-    <button onclick="addStock()">إضافة</button>
-  </div>
+<div class="search">
+<input id="symbolInput" type="text" placeholder="اكتب رمز السهم مثل NTCL">
+<button onclick="addStock()">إضافة</button>
+</div>
 
-  <div id="status" class="status"></div>
+<div id="status" class="status"></div>
 
-  <div id="stocks">
-    <div class="empty">
-      اكتب رمز السهم ثم اضغط إضافة
-    </div>
-  </div>
+<div id="stocks">
+<div class="empty">اكتب رمز السهم ثم اضغط إضافة</div>
+</div>
 
 </div>
 
 <script>
 
-const stocks = {};
-
-const $ = id => document.getElementById(id);
+const stocks={};
 
 function money(v){
-  if(v === null || v === undefined || !isFinite(v)) return "-";
-  return "$" + Number(v).toFixed(2);
+if(v===null||v===undefined||!isFinite(v))return "-";
+return "$"+Number(v).toFixed(2);
 }
 
-function number(v,d=2){
-  if(v === null || v === undefined || !isFinite(v)) return "-";
-  return Number(v).toFixed(d);
+function num(v,d=2){
+if(v===null||v===undefined||!isFinite(v))return "-";
+return Number(v).toFixed(d);
 }
 
 function dateText(d){
-  if(!d) return "-";
-  const p=d.split("-");
-  if(p.length!==3) return d;
-  return p[2]+"/"+p[1]+"/"+p[0];
+if(!d)return "-";
+const p=d.split("-");
+return p.length===3?p[2]+"/"+p[1]+"/"+p[0]:d;
 }
 
 
@@ -292,70 +170,51 @@ function dateText(d){
 
 async function getStock(symbol){
 
-  const url =
-    "/.netlify/functions/stock?symbol=" +
-    encodeURIComponent(symbol);
+const response=await fetch(
+"/.netlify/functions/stock?symbol="+
+encodeURIComponent(symbol),
+{cache:"no-store"}
+);
 
-  const response = await fetch(url, {
-    method:"GET",
-    cache:"no-store"
-  });
+let result;
 
-  let result;
+try{
+result=await response.json();
+}catch(e){
+throw new Error("الاستجابة من السيرفر غير صحيحة");
+}
 
-  try{
-    result = await response.json();
-  }catch(e){
-    throw new Error("الاستجابة من السيرفر غير صحيحة");
-  }
+if(!response.ok){
+let message=result?.error||"تعذر جلب بيانات السهم";
+if(result?.details)message+=" — "+result.details;
+throw new Error(message);
+}
 
-  if(!response.ok){
-
-    let msg = result?.error || "تعذر جلب بيانات السهم";
-
-    if(result?.details){
-      msg += " — " + result.details;
-    }
-
-    throw new Error(msg);
-  }
-
-  if(!result.data){
-    throw new Error("لم تصل بيانات السهم");
-  }
-
-  return result;
+return result;
 }
 
 
 /* =========================
-   تحويل بيانات Alpha Vantage
+   تحويل الأسعار
 ========================= */
 
 function makeRows(data){
 
-  const series = data["Time Series (Daily)"];
+const series=data["Time Series (Daily)"];
 
-  if(!series){
-    throw new Error("بيانات الأسعار اليومية غير موجودة");
-  }
+if(!series)throw new Error("بيانات الأسعار اليومية غير موجودة");
 
-  return Object.entries(series)
-    .map(([date,v]) => ({
-      date,
-      open:Number(v["1. open"]),
-      high:Number(v["2. high"]),
-      low:Number(v["3. low"]),
-      close:Number(v["4. close"]),
-      volume:Number(v["5. volume"])
-    }))
-    .filter(x =>
-      isFinite(x.open) &&
-      isFinite(x.high) &&
-      isFinite(x.low) &&
-      isFinite(x.close)
-    )
-    .sort((a,b)=>a.date.localeCompare(b.date));
+return Object.entries(series)
+.map(([date,v])=>({
+date,
+open:Number(v["1. open"]),
+high:Number(v["2. high"]),
+low:Number(v["3. low"]),
+close:Number(v["4. close"]),
+volume:Number(v["5. volume"])
+}))
+.filter(x=>isFinite(x.close))
+.sort((a,b)=>a.date.localeCompare(b.date));
 }
 
 
@@ -363,68 +222,62 @@ function makeRows(data){
    EMA
 ========================= */
 
-function ema(values, period){
+function ema(values,period){
 
-  if(values.length < period) return null;
+if(values.length<period)return null;
 
-  const k=2/(period+1);
+const k=2/(period+1);
 
-  let result=0;
+let result=0;
 
-  for(let i=0;i<period;i++){
-    result += values[i];
-  }
+for(let i=0;i<period;i++)result+=values[i];
 
-  result /= period;
+result/=period;
 
-  for(let i=period;i<values.length;i++){
-    result =
-      values[i]*k +
-      result*(1-k);
-  }
+for(let i=period;i<values.length;i++){
+result=values[i]*k+result*(1-k);
+}
 
-  return result;
+return result;
 }
 
 
 /* =========================
-   RSI 14
+   RSI
 ========================= */
 
 function rsi(values,period=14){
 
-  if(values.length <= period) return null;
+if(values.length<=period)return null;
 
-  let gains=0;
-  let losses=0;
+let gains=0;
+let losses=0;
 
-  for(let i=1;i<=period;i++){
+for(let i=1;i<=period;i++){
+const d=values[i]-values[i-1];
+if(d>=0)gains+=d;
+else losses+=Math.abs(d);
+}
 
-    const diff=values[i]-values[i-1];
+let avgGain=gains/period;
+let avgLoss=losses/period;
 
-    if(diff>=0) gains+=diff;
-    else losses+=Math.abs(diff);
-  }
+for(let i=period+1;i<values.length;i++){
 
-  let avgGain=gains/period;
-  let avgLoss=losses/period;
+const d=values[i]-values[i-1];
 
-  for(let i=period+1;i<values.length;i++){
+const gain=d>0?d:0;
+const loss=d<0?Math.abs(d):0;
 
-    const diff=values[i]-values[i-1];
+avgGain=((avgGain*(period-1))+gain)/period;
+avgLoss=((avgLoss*(period-1))+loss)/period;
+}
 
-    const gain=diff>0?diff:0;
-    const loss=diff<0?Math.abs(diff):0;
+if(avgLoss===0)return 100;
 
-    avgGain=((avgGain*(period-1))+gain)/period;
-    avgLoss=((avgLoss*(period-1))+loss)/period;
-  }
+const rs=avgGain/avgLoss;
 
-  if(avgLoss===0) return 100;
-
-  const rs=avgGain/avgLoss;
-
-  return 100-(100/(1+rs));
+return 100-(100/(1+rs));
 }
 
 
@@ -434,574 +287,615 @@ function rsi(values,period=14){
 
 function macd(values){
 
-  if(values.length<35){
-    return {
-      macd:null,
-      signal:null,
-      histogram:null
-    };
-  }
+if(values.length<35){
+return{macd:null,signal:null,histogram:null};
+}
 
-  const macdValues=[];
+const arr=[];
 
-  for(let i=0;i<values.length;i++){
+for(let i=0;i<values.length;i++){
 
-    const part=values.slice(0,i+1);
+const part=values.slice(0,i+1);
 
-    const e12=ema(part,12);
-    const e26=ema(part,26);
+const e12=ema(part,12);
+const e26=ema(part,26);
 
-    if(e12!==null && e26!==null){
-      macdValues.push(e12-e26);
-    }
-  }
+if(e12!==null&&e26!==null){
+arr.push(e12-e26);
+}
+}
 
-  if(macdValues.length<9){
-    return {
-      macd:null,
-      signal:null,
-      histogram:null
-    };
-  }
+const signal=ema(arr,9);
+const current=arr[arr.length-1];
 
-  const signal=ema(macdValues,9);
-  const macdNow=macdValues[macdValues.length-1];
-
-  return {
-    macd:macdNow,
-    signal,
-    histogram:
-      signal!==null
-        ? macdNow-signal
-        : null
-  };
+return{
+macd:current,
+signal,
+histogram:
+signal!==null?current-signal:null
+};
 }
 
 
 /* =========================
-   Relative Volume
+   RVOL
 ========================= */
 
 function rvol(rows){
 
-  if(rows.length<21) return null;
+if(rows.length<21)return null;
 
-  const latest=rows[rows.length-1];
+const latest=rows[rows.length-1];
 
-  const previous=rows.slice(
-    Math.max(0,rows.length-21),
-    rows.length-1
-  );
+const old=rows.slice(
+Math.max(0,rows.length-21),
+rows.length-1
+);
 
-  if(!previous.length) return null;
+const avg=
+old.reduce((s,x)=>s+x.volume,0)/old.length;
 
-  const avg=
-    previous.reduce((s,x)=>s+x.volume,0) /
-    previous.length;
-
-  if(!avg) return null;
-
-  return latest.volume/avg;
+return avg?latest.volume/avg:null;
 }
 
 
 /* =========================
-   تحديد الارتكاز
+   القاع والارتكاز
 ========================= */
 
 function findPivot(rows){
 
-  if(rows.length<5) return null;
+if(rows.length<5)return null;
 
-  /*
-    نبحث عن آخر قاع محلي واضح.
-    القاع يكون أقل من الأيام القريبة حوله.
-  */
+let pivot=null;
 
-  const start=Math.max(1,rows.length-60);
+const start=Math.max(1,rows.length-60);
 
-  let pivot=null;
+for(let i=start;i<rows.length-1;i++){
 
-  for(let i=start;i<rows.length-1;i++){
+const prev=rows[i-1];
+const cur=rows[i];
+const next=rows[i+1];
 
-    const prev=rows[i-1];
-    const cur=rows[i];
-    const next=rows[i+1];
+if(cur.low<=prev.low&&cur.low<=next.low){
 
-    if(
-      cur.low <= prev.low &&
-      cur.low <= next.low
-    ){
+pivot={
+price:cur.low,
+date:cur.date,
+index:i
+};
 
-      pivot={
-        price:cur.low,
-        date:cur.date,
-        index:i
-      };
-    }
-  }
+}
+}
 
-  return pivot;
+return pivot;
 }
 
 
 /* =========================
-   ثبات الارتكاز 4 أيام
+   الثبات 4 أيام
 ========================= */
 
-function calculateStability(rows,pivot){
+function stability(rows,pivot){
 
-  if(!pivot){
-    return {
-      count:0,
-      complete:false,
-      pivot:null
-    };
-  }
+if(!pivot){
+return{
+count:0,
+complete:false,
+pivot:null
+};
+}
 
-  let currentPivot=pivot.price;
-  let count=0;
-  let currentIndex=pivot.index;
+let p=pivot.price;
+let index=pivot.index;
+let count=0;
 
-  for(
-    let i=pivot.index+1;
-    i<rows.length;
-    i++
-  ){
+for(let i=pivot.index+1;i<rows.length;i++){
 
-    const candle=rows[i];
+const candle=rows[i];
 
-    /*
-      إذا كسر Low القاع السابق،
-      نعيد العد من القاع الجديد.
-    */
+if(candle.low<p){
 
-    if(candle.low < currentPivot){
+p=candle.low;
+index=i;
+count=0;
 
-      currentPivot=candle.low;
-      currentIndex=i;
-      count=0;
+}else{
 
-      continue;
-    }
+count++;
+}
 
-    count++;
-  }
+}
 
-  return {
-    count:Math.min(count,4),
-    complete:count>=4,
-    pivot:{
-      price:currentPivot,
-      date:rows[currentIndex]?.date || pivot.date
-    }
-  };
+return{
+count:Math.min(count,4),
+complete:count>=4,
+pivot:{
+price:p,
+date:rows[index].date
+}
+};
 }
 
 
 /* =========================
-   تحليل السهم
+   التحليل
 ========================= */
 
 function analyze(result){
 
-  const rows=makeRows(result.data);
+let rows=makeRows(result.data);
 
-  if(rows.length<30){
-    throw new Error("البيانات غير كافية للتحليل");
-  }
+/*
+  إذا وجد تقسيم، نستخدم فقط البيانات
+  من تاريخ آخر تقسيم وما بعده للقاع والقمة.
+*/
 
-  const latest=rows[rows.length-1];
-  const previous=rows[rows.length-2];
+let split=result.split||null;
 
-  const closes=rows.map(x=>x.close);
+let postSplitRows=rows;
 
-  const e20=ema(closes,20);
-  const e30=ema(closes,30);
-  const e50=ema(closes,50);
+if(split?.date){
 
-  const rsi14=rsi(closes,14);
+postSplitRows=rows.filter(
+x=>x.date>=split.date
+);
 
-  const macdData=macd(closes);
+if(postSplitRows.length<5){
+postSplitRows=rows;
+}
+}
 
-  const relativeVolume=rvol(rows);
+const latest=rows[rows.length-1];
+const previous=rows[rows.length-2];
 
-  const pivot=findPivot(rows);
+const closes=rows.map(x=>x.close);
 
-  const stability=calculateStability(rows,pivot);
+const e20=ema(closes,20);
+const e30=ema(closes,30);
+const e50=ema(closes,50);
 
-  let lowest=rows[0];
+const rsi14=rsi(closes,14);
 
-  for(const x of rows){
-    if(x.low<lowest.low) lowest=x;
-  }
+const macdData=macd(closes);
 
-  let highest=rows[0];
+const relativeVolume=rvol(rows);
 
-  for(const x of rows){
-    if(x.high>highest.high) highest=x;
-  }
 
-  const bounce =
-    stability.pivot &&
-    stability.pivot.price>0
-      ? ((latest.close-stability.pivot.price) /
-         stability.pivot.price)*100
-      : null;
+/* الارتكاز بعد التقسيم */
 
-  return {
-    symbol:result.symbol,
-    rows,
-    latest,
-    previous,
-    ema20:e20,
-    ema30:e30,
-    ema50:e50,
-    rsi:rsi14,
-    macd:macdData,
-    rvol:relativeVolume,
-    pivot:stability.pivot,
-    stability,
-    lowest,
-    highest,
-    bounce
-  };
+const pivot=findPivot(postSplitRows);
+
+let fixedPivot=null;
+
+if(pivot){
+
+const realIndex=
+rows.findIndex(x=>x.date===pivot.date);
+
+fixedPivot={
+price:pivot.price,
+date:pivot.date,
+index:realIndex
+};
+
+}
+
+const stable=stability(rows,fixedPivot);
+
+
+/* أعلى قمة بعد التقسيم */
+
+let highestAfter=null;
+let lowestAfter=null;
+
+if(postSplitRows.length){
+
+highestAfter=postSplitRows.reduce(
+(a,b)=>b.high>a.high?b:a,
+postSplitRows[0]
+);
+
+lowestAfter=postSplitRows.reduce(
+(a,b)=>b.low<a.low?b:a,
+postSplitRows[0]
+);
+
+}
+
+
+/* الأيام بعد التقسيم */
+
+let daysAfter=null;
+
+if(split?.date){
+
+const d1=new Date(split.date+"T00:00:00");
+const d2=new Date(latest.date+"T00:00:00");
+
+daysAfter=Math.max(
+0,
+Math.floor(
+(d2-d1)/(1000*60*60*24)
+)
+);
+}
+
+
+return{
+symbol:result.symbol,
+rows,
+latest,
+previous,
+ema20:e20,
+ema30:e30,
+ema50:e50,
+rsi:rsi14,
+macd:macdData,
+rvol:relativeVolume,
+pivot:stable.pivot,
+stability:stable,
+split,
+daysAfter,
+highestAfter,
+lowestAfter
+};
+
 }
 
 
 /* =========================
-   شروط المتابعة
+   رسم الشروط
 ========================= */
 
-function conditionRow(name,ok,text){
+function condition(name,ok,text){
 
-  return `
-    <div class="condition">
-      <span>${name}</span>
-      <span class="badge ${ok?'green':'yellow'}">
-        ${ok?'✓':'•'} ${text}
-      </span>
-    </div>
-  `;
+return`
+<div class="condition">
+<span>${name}</span>
+<span class="badge ${ok?"green":"yellow"}">
+${ok?"✓":"•"} ${text}
+</span>
+</div>`;
 }
 
 
 /* =========================
-   رسم السهم
+   رسم البطاقة
 ========================= */
 
 function renderStock(a){
 
-  const l=a.latest;
-
-  const priceChange=
-    a.previous
-      ? l.close-a.previous.close
-      : 0;
-
-  const changePercent=
-    a.previous && a.previous.close
-      ? (priceChange/a.previous.close)*100
-      : 0;
-
-  const priceClass=
-    priceChange>0
-      ? "green"
-      : priceChange<0
-        ? "red"
-        : "";
-
-  const rsiText=
-    a.rsi===null
-      ? "-"
-      : number(a.rsi,1);
-
-  const rsiGood=
-    a.rsi!==null &&
-    a.rsi>=23 &&
-    a.rsi<=35;
-
-  const macdGood=
-    a.macd.histogram!==null &&
-    a.macd.histogram>0;
-
-  const ema20Good=
-    a.ema20!==null &&
-    l.close>a.ema20;
-
-  const ema30Good=
-    a.ema30!==null &&
-    l.close>a.ema30;
-
-  const ema50Good=
-    a.ema50!==null &&
-    l.close>a.ema50;
-
-  const volumeGood=
-    a.rvol!==null &&
-    a.rvol>=1.2;
-
-  const stabilityGood=
-    a.stability.complete;
-
-  return `
-
-  <div class="card">
-
-    <div class="cardHead">
-
-      <div>
-        <div class="symbol">${a.symbol}</div>
-        <div class="date">
-          آخر جلسة: ${dateText(l.date)}
-        </div>
-      </div>
-
-      <button
-        class="remove"
-        onclick="removeStock('${a.symbol}')">
-        حذف
-      </button>
-
-    </div>
-
-
-    <div class="priceBox">
-
-      <div>
-        <div class="label">آخر إغلاق</div>
-        <div class="bigPrice ${priceClass}">
-          ${money(l.close)}
-        </div>
-      </div>
-
-      <div>
-        <div class="label">التغير</div>
-        <div class="bigPrice ${priceClass}">
-          ${priceChange>=0?'+':''}${number(priceChange)}
-        </div>
-        <div class="${priceClass}">
-          ${changePercent>=0?'+':''}${number(changePercent,2)}%
-        </div>
-      </div>
-
-    </div>
-
-
-    <div class="grid">
-
-      <div class="item">
-        <div class="label">الافتتاح</div>
-        <div class="value">
-          ${money(l.open)}
-        </div>
-      </div>
-
-      <div class="item">
-        <div class="label">أعلى سعر</div>
-        <div class="value">
-          ${money(l.high)}
-        </div>
-      </div>
-
-      <div class="item">
-        <div class="label">أدنى سعر</div>
-        <div class="value">
-          ${money(l.low)}
-        </div>
-      </div>
-
-      <div class="item">
-        <div class="label">حجم التداول</div>
-        <div class="value">
-          ${l.volume.toLocaleString()}
-        </div>
-      </div>
-
-      <div class="item">
-        <div class="label">أقل سعر بالبيانات</div>
-        <div class="value">
-          ${money(a.lowest.low)}
-        </div>
-      </div>
-
-      <div class="item">
-        <div class="label">تاريخ أقل سعر</div>
-        <div class="value">
-          ${dateText(a.lowest.date)}
-        </div>
-      </div>
-
-      <div class="item">
-        <div class="label">EMA 20</div>
-        <div class="value">
-          ${money(a.ema20)}
-        </div>
-      </div>
-
-      <div class="item">
-        <div class="label">EMA 30</div>
-        <div class="value">
-          ${money(a.ema30)}
-        </div>
-      </div>
-
-      <div class="item">
-        <div class="label">EMA 50</div>
-        <div class="value">
-          ${money(a.ema50)}
-        </div>
-      </div>
-
-      <div class="item">
-        <div class="label">RSI 14</div>
-        <div class="value ${rsiGood?'green':''}">
-          ${rsiText}
-        </div>
-      </div>
-
-      <div class="item">
-        <div class="label">MACD</div>
-        <div class="value ${macdGood?'green':''}">
-          ${number(a.macd.macd,4)}
-        </div>
-      </div>
-
-      <div class="item">
-        <div class="label">RVOL</div>
-        <div class="value">
-          ${a.rvol===null?'-':number(a.rvol,2)+'x'}
-        </div>
-      </div>
-
-    </div>
-
-
-    <div class="pivot">
-
-      <div class="pivotTitle">
-        الارتكاز والثبات
-      </div>
-
-      <div class="pivotRow">
-        <span>قاع الارتكاز</span>
-        <strong>${money(a.pivot?.price)}</strong>
-      </div>
-
-      <div class="pivotRow">
-        <span>تاريخ الارتكاز</span>
-        <strong>${dateText(a.pivot?.date)}</strong>
-      </div>
-
-      <div class="pivotRow">
-        <span>الثبات</span>
-        <strong class="${stabilityGood?'green':'yellow'}">
-          ${a.stability.count}/4
-          ${stabilityGood?'مكتمل':'غير مكتمل'}
-        </strong>
-      </div>
-
-      <div class="pivotRow">
-        <span>الارتداد من القاع</span>
-        <strong class="${a.bounce>0?'green':''}">
-          ${a.bounce===null?'-':number(a.bounce,2)+'%'}
-        </strong>
-      </div>
-
-    </div>
-
-
-    <div class="section">
-
-      <div class="sectionTitle">
-        شروط متابعة غير مكتملة — لا تمنع الإضافة
-      </div>
-
-      ${conditionRow(
-        "RSI منخفض",
-        rsiGood,
-        a.rsi===null ? "-" : number(a.rsi,1)
-      )}
-
-      ${conditionRow(
-        "فوق EMA20",
-        ema20Good,
-        ema20Good ? "فوق" : "تحت"
-      )}
-
-      ${conditionRow(
-        "فوق EMA30",
-        ema30Good,
-        ema30Good ? "فوق" : "تحت"
-      )}
-
-      ${conditionRow(
-        "فوق EMA50",
-        ema50Good,
-        ema50Good ? "فوق" : "تحت"
-      )}
-
-      ${conditionRow(
-        "MACD",
-        macdGood,
-        macdGood ? "تحسن" : "لم يتحسن بعد"
-      )}
-
-      ${conditionRow(
-        "حجم التداول",
-        volumeGood,
-        a.rvol===null ? "-" : number(a.rvol,2)+"x"
-      )}
-
-      ${conditionRow(
-        "ثبات الارتكاز",
-        stabilityGood,
-        a.stability.count+"/4"
-      )}
-
-    </div>
-
-
-    <div class="section">
-
-      <div class="sectionTitle">
-        ملاحظات البيانات
-      </div>
-
-      <div class="condition">
-        <span>أعلى سعر بالبيانات</span>
-        <strong>${money(a.highest.high)}</strong>
-      </div>
-
-      <div class="condition">
-        <span>تاريخ أعلى سعر</span>
-        <strong>${dateText(a.highest.date)}</strong>
-      </div>
-
-      <div class="condition">
-        <span>البيانات المستخدمة</span>
-        <strong>${a.rows.length} جلسة</strong>
-      </div>
-
-      <div class="condition">
-        <span>التقسيم</span>
-        <strong class="yellow">
-          سيتم ربط بيانات التقسيم لاحقًا
-        </strong>
-      </div>
-
-      <div class="condition">
-        <span>الأخبار</span>
-        <strong class="yellow">
-          سيتم ربط الأخبار لاحقًا
-        </strong>
-      </div>
-
-    </div>
-
-  </div>
-
-  `;
+const l=a.latest;
+
+const change=l.close-a.previous.close;
+
+const changePct=
+a.previous.close?
+(change/a.previous.close)*100:0;
+
+const cls=
+change>0?"green":
+change<0?"red":"";
+
+const rsiGood=
+a.rsi!==null&&
+a.rsi>=23&&
+a.rsi<=35;
+
+const macdGood=
+a.macd.histogram!==null&&
+a.macd.histogram>0;
+
+const ema20Good=l.close>a.ema20;
+const ema30Good=l.close>a.ema30;
+const ema50Good=l.close>a.ema50;
+
+const volumeGood=
+a.rvol!==null&&
+a.rvol>=1.2;
+
+const stableGood=a.stability.complete;
+
+
+/* معلومات التقسيم */
+
+let splitHTML="";
+
+if(a.split){
+
+splitHTML=`
+
+<div class="box">
+
+<div class="boxTitle">
+📊 التقسيم
+</div>
+
+<div class="row">
+<span>آخر تقسيم</span>
+<strong>${dateText(a.split.date)}</strong>
+</div>
+
+<div class="row">
+<span>نوع التقسيم</span>
+<strong>${a.split.ratio||"-"}</strong>
+</div>
+
+<div class="row">
+<span>مر بعد التقسيم</span>
+<strong class="blue">
+${a.daysAfter!==null?a.daysAfter+" يوم":"-"}
+</strong>
+</div>
+
+<div class="row">
+<span>أعلى قمة بعد التقسيم</span>
+<strong class="green">
+${a.highestAfter?money(a.highestAfter.high):"-"}
+</strong>
+</div>
+
+<div class="row">
+<span>تاريخ أعلى قمة</span>
+<strong>
+${a.highestAfter?dateText(a.highestAfter.date):"-"}
+</strong>
+</div>
+
+<div class="row">
+<span>أقل قاع بعد التقسيم</span>
+<strong>
+${a.lowestAfter?money(a.lowestAfter.low):"-"}
+</strong>
+</div>
+
+</div>
+
+`;
+
+}else{
+
+splitHTML=`
+
+<div class="box">
+
+<div class="boxTitle">
+📊 التقسيم
+</div>
+
+<div class="row">
+<span>آخر تقسيم</span>
+<strong class="yellow">
+لا توجد بيانات تقسيم
+</strong>
+</div>
+
+</div>
+
+`;
+
+}
+
+
+return`
+
+<div class="card">
+
+<div class="cardHead">
+
+<div>
+<div class="symbol">${a.symbol}</div>
+<div class="date">
+آخر جلسة: ${dateText(l.date)}
+</div>
+</div>
+
+<button class="remove"
+onclick="removeStock('${a.symbol}')">
+حذف
+</button>
+
+</div>
+
+
+<div class="priceBox">
+
+<div>
+<div class="label">آخر إغلاق</div>
+<div class="bigPrice ${cls}">
+${money(l.close)}
+</div>
+</div>
+
+<div>
+<div class="label">التغير</div>
+<div class="bigPrice ${cls}">
+${change>=0?"+":""}${num(change)}
+</div>
+<div class="${cls}">
+${changePct>=0?"+":""}${num(changePct)}%
+</div>
+</div>
+
+</div>
+
+
+<div class="grid">
+
+<div class="item">
+<div class="label">الافتتاح</div>
+<div class="value">${money(l.open)}</div>
+</div>
+
+<div class="item">
+<div class="label">أعلى سعر اليوم</div>
+<div class="value">${money(l.high)}</div>
+</div>
+
+<div class="item">
+<div class="label">أدنى سعر اليوم</div>
+<div class="value">${money(l.low)}</div>
+</div>
+
+<div class="item">
+<div class="label">حجم التداول</div>
+<div class="value">${l.volume.toLocaleString()}</div>
+</div>
+
+<div class="item">
+<div class="label">أقل قاع بعد التقسيم</div>
+<div class="value">
+${a.lowestAfter?money(a.lowestAfter.low):"-"}
+</div>
+</div>
+
+<div class="item">
+<div class="label">تاريخ القاع</div>
+<div class="value">
+${a.lowestAfter?dateText(a.lowestAfter.date):"-"}
+</div>
+</div>
+
+<div class="item">
+<div class="label">EMA 20</div>
+<div class="value">${money(a.ema20)}</div>
+</div>
+
+<div class="item">
+<div class="label">EMA 30</div>
+<div class="value">${money(a.ema30)}</div>
+</div>
+
+<div class="item">
+<div class="label">EMA 50</div>
+<div class="value">${money(a.ema50)}</div>
+</div>
+
+<div class="item">
+<div class="label">RSI 14</div>
+<div class="value">${num(a.rsi,1)}</div>
+</div>
+
+<div class="item">
+<div class="label">MACD</div>
+<div class="value ${macdGood?"green":""}">
+${num(a.macd.macd,4)}
+</div>
+</div>
+
+<div class="item">
+<div class="label">RVOL</div>
+<div class="value">
+${a.rvol===null?"-":num(a.rvol,2)+"x"}
+</div>
+</div>
+
+</div>
+
+
+${splitHTML}
+
+
+/* =========================
+   الارتكاز
+========================= */
+
+<div class="box">
+
+<div class="boxTitle">
+الارتكاز والثبات
+</div>
+
+<div class="row">
+<span>قاع الارتكاز</span>
+<strong>${money(a.pivot?.price)}</strong>
+</div>
+
+<div class="row">
+<span>تاريخ الارتكاز</span>
+<strong>${dateText(a.pivot?.date)}</strong>
+</div>
+
+<div class="row">
+<span>الثبات</span>
+<strong class="${stableGood?"green":"yellow"}">
+${a.stability.count}/4
+${stableGood?"مكتمل":"غير مكتمل"}
+</strong>
+</div>
+
+<div class="row">
+<span>الارتداد من القاع</span>
+<strong class="green">
+${
+a.pivot
+?
+num(
+((l.close-a.pivot.price)/
+a.pivot.price)*100
+)+"%"
+:"-"
+}
+</strong>
+</div>
+
+</div>
+
+
+<div class="section">
+
+<div class="sectionTitle">
+شروط متابعة غير مكتملة — لا تمنع الإضافة
+</div>
+
+${condition(
+"RSI منخفض",
+rsiGood,
+a.rsi===null?"-":num(a.rsi,1)
+)}
+
+${condition(
+"فوق EMA20",
+ema20Good,
+ema20Good?"فوق":"تحت"
+)}
+
+${condition(
+"فوق EMA30",
+ema30Good,
+ema30Good?"فوق":"تحت"
+)}
+
+${condition(
+"فوق EMA50",
+ema50Good,
+ema50Good?"فوق":"تحت"
+)}
+
+${condition(
+"MACD",
+macdGood,
+macdGood?"تحسن":"لم يتحسن بعد"
+)}
+
+${condition(
+"حجم التداول",
+volumeGood,
+a.rvol===null?"-":num(a.rvol,2)+"x"
+)}
+
+${condition(
+"ثبات الارتكاز",
+stableGood,
+a.stability.count+"/4"
+)}
+
+</div>
+
+</div>
+
+`;
 }
 
 
@@ -1011,88 +905,79 @@ function renderStock(a){
 
 async function addStock(){
 
-  const input=$("symbolInput");
+const input=document.getElementById("symbolInput");
 
-  const symbol=
-    input.value
-      .trim()
-      .toUpperCase();
+const symbol=input.value.trim().toUpperCase();
 
-  if(!symbol){
-    $("status").textContent="اكتب رمز السهم أولاً";
-    return;
-  }
+if(!symbol){
+document.getElementById("status").textContent=
+"اكتب رمز السهم أولاً";
+return;
+}
 
-  $("status").textContent=
-    "جاري جلب بيانات "+symbol+"...";
+document.getElementById("status").textContent=
+"جاري جلب بيانات "+symbol+"...";
 
-  try{
+try{
 
-    const result=
-      await getStock(symbol);
+const result=await getStock(symbol);
 
-    const analysis=
-      analyze(result);
+const analysis=analyze(result);
 
-    stocks[symbol]=analysis;
+stocks[symbol]=analysis;
 
-    input.value="";
+input.value="";
 
-    renderAll();
+renderAll();
 
-    $("status").textContent=
-      "تم تحديث "+symbol+" بنجاح ✓";
+document.getElementById("status").textContent=
+"تم تحديث "+symbol+" بنجاح ✓";
 
-  }catch(error){
+}catch(error){
 
-    console.error(error);
+document.getElementById("status").innerHTML=
+`<div class="error">
+خطأ: ${escapeHtml(error.message)}
+</div>`;
+}
 
-    $("status").innerHTML=
-      `<div class="error">
-        خطأ: ${escapeHtml(error.message)}
-      </div>`;
-  }
 }
 
 
 /* =========================
-   حذف سهم
+   حذف
 ========================= */
 
 function removeStock(symbol){
 
-  delete stocks[symbol];
+delete stocks[symbol];
 
-  renderAll();
+renderAll();
 }
 
 
 /* =========================
-   عرض الكل
+   عرض الأسهم
 ========================= */
 
 function renderAll(){
 
-  const box=$("stocks");
+const box=document.getElementById("stocks");
 
-  const list=
-    Object.values(stocks);
+const list=Object.values(stocks);
 
-  if(!list.length){
+if(!list.length){
 
-    box.innerHTML=`
-      <div class="empty">
-        اكتب رمز السهم ثم اضغط إضافة
-      </div>
-    `;
+box.innerHTML=
+`<div class="empty">
+اكتب رمز السهم ثم اضغط إضافة
+</div>`;
 
-    return;
-  }
+return;
+}
 
-  box.innerHTML=
-    list
-      .map(renderStock)
-      .join("");
+box.innerHTML=
+list.map(renderStock).join("");
 }
 
 
@@ -1102,29 +987,25 @@ function renderAll(){
 
 function escapeHtml(value){
 
-  return String(value)
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
+return String(value)
+.replaceAll("&","&amp;")
+.replaceAll("<","&lt;")
+.replaceAll(">","&gt;")
+.replaceAll('"',"&quot;")
+.replaceAll("'","&#039;");
 }
 
 
 /* =========================
-   زر Enter
+   Enter
 ========================= */
 
-$("symbolInput").addEventListener(
-  "keydown",
-  function(e){
+document.getElementById("symbolInput")
+.addEventListener("keydown",e=>{
 
-    if(e.key==="Enter"){
-      addStock();
-    }
+if(e.key==="Enter")addStock();
 
-  }
-);
+});
 
 </script>
 
