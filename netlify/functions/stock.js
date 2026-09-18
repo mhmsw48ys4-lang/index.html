@@ -1,4 +1,5 @@
 exports.handler = async (event) => {
+
   const headers = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",
@@ -19,7 +20,9 @@ exports.handler = async (event) => {
   ).trim().toUpperCase();
 
   if (!symbol) {
-    return send(400, { error: "اكتب رمز السهم" });
+    return send(400, {
+      error: "اكتب رمز السهم"
+    });
   }
 
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
@@ -33,7 +36,7 @@ exports.handler = async (event) => {
   try {
 
     /* =========================
-       الأسعار اليومية
+       1 — الأسعار اليومية
     ========================= */
 
     const dailyUrl =
@@ -82,7 +85,9 @@ exports.handler = async (event) => {
         Number.isFinite(x.low) &&
         Number.isFinite(x.close)
       )
-      .sort((a, b) => a.date.localeCompare(b.date));
+      .sort((a, b) =>
+        a.date.localeCompare(b.date)
+      );
 
     if (rows.length < 30) {
       return send(404, {
@@ -95,7 +100,7 @@ exports.handler = async (event) => {
 
 
     /* =========================
-       أعلى وأدنى سعر
+       2 — أعلى وأدنى سعر عام
     ========================= */
 
     const lowest = rows.reduce(
@@ -110,220 +115,125 @@ exports.handler = async (event) => {
 
 
     /* =========================
-       التقسيمات
+       3 — جلب أحداث التقسيم
+       من Yahoo داخل السيرفر
     ========================= */
 
-    let splitData = null;
+    let yahooSplits = {};
 
     try {
 
-      const splitUrl =
-        "https://www.alphavantage.co/query" +
-        "?function=SPLITS" +
-        "&symbol=" + encodeURIComponent(symbol) +
-        "&apikey=" + encodeURIComponent(apiKey);
+      const yahooUrl =
+        "https://query1.finance.yahoo.com/v8/finance/chart/" +
+        encodeURIComponent(symbol) +
+        "?range=1y&interval=1d&events=splits";
 
-      const splitResponse = await fetch(splitUrl);
-      splitData = await splitResponse.json();
+      const yahooResponse = await fetch(yahooUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0"
+        }
+      });
+
+      const yahooData = await yahooResponse.json();
+
+      const result =
+        yahooData?.chart?.result?.[0];
+
+      yahooSplits =
+        result?.events?.splits || {};
 
     } catch (error) {
-      splitData = null;
+
+      yahooSplits = {};
+
     }
 
 
     /* =========================
-       استخراج التقسيمات
-       يدعم أكثر من صيغة
+       4 — تحويل التقسيمات
     ========================= */
 
-    function extractSplits(obj) {
+    const splitList = Object.values(yahooSplits)
+      .map(x => {
 
-      const result = [];
+        const timestamp =
+          Number(x.date);
 
-      if (!obj || typeof obj !== "object") {
-        return result;
-      }
-
-      const possibleArrays = [];
-
-      if (Array.isArray(obj)) {
-        possibleArrays.push(obj);
-      }
-
-      if (Array.isArray(obj.data)) {
-        possibleArrays.push(obj.data);
-      }
-
-      if (Array.isArray(obj.splits)) {
-        possibleArrays.push(obj.splits);
-      }
-
-      for (const arr of possibleArrays) {
-
-        for (const item of arr) {
-
-          if (!item || typeof item !== "object") {
-            continue;
-          }
-
-          const date =
-            item.date ||
-            item["effective_date"] ||
-            item["effective date"] ||
-            item["ex_date"] ||
-            item["ex-date"];
-
-          const ratio =
-            item.split_factor ||
-            item["split_factor"] ||
-            item.split ||
-            item["split ratio"] ||
-            item["split_ratio"] ||
-            item.ratio;
-
-          if (date) {
-
-            result.push({
-              date: String(date),
-              ratio: ratio
-                ? String(ratio)
-                : null
-            });
-
-          }
-        }
-      }
-
-      return result;
-    }
-
-
-    let splits = extractSplits(splitData);
-
-
-    /* =========================
-       محاولة قراءة أي شكل متداخل
-    ========================= */
-
-    if (!splits.length && splitData && typeof splitData === "object") {
-
-      function scanObject(obj) {
-
-        if (!obj || typeof obj !== "object") {
-          return;
+        if (!timestamp) {
+          return null;
         }
 
-        if (Array.isArray(obj)) {
+        const d =
+          new Date(timestamp * 1000);
 
-          for (const item of obj) {
-            scanObject(item);
-          }
+        const year =
+          d.getUTCFullYear();
 
-          return;
-        }
+        const month =
+          String(d.getUTCMonth() + 1)
+            .padStart(2, "0");
 
-        const date =
-          obj.date ||
-          obj.effective_date ||
-          obj["effective_date"] ||
-          obj.ex_date ||
-          obj["ex_date"];
+        const day =
+          String(d.getUTCDate())
+            .padStart(2, "0");
 
-        const ratio =
-          obj.split_factor ||
-          obj["split_factor"] ||
-          obj.split ||
-          obj.ratio;
+        return {
 
-        if (date) {
+          date:
+            `${year}-${month}-${day}`,
 
-          splits.push({
-            date: String(date),
-            ratio: ratio
-              ? String(ratio)
-              : null
-          });
-        }
+          numerator:
+            x.numerator ?? null,
 
-        for (const key of Object.keys(obj)) {
+          denominator:
+            x.denominator ?? null
 
-          if (
-            typeof obj[key] === "object" &&
-            obj[key] !== null
-          ) {
-            scanObject(obj[key]);
-          }
+        };
 
-        }
-      }
-
-      scanObject(splitData);
-    }
-
-
-    /* =========================
-       تنظيف وترتيب التقسيمات
-    ========================= */
-
-    splits = splits
-      .filter(x =>
-        x.date &&
-        /^\d{4}-\d{2}-\d{2}$/.test(x.date)
-      )
+      })
+      .filter(Boolean)
       .sort((a, b) =>
         a.date.localeCompare(b.date)
       );
 
 
-    /* إزالة التكرار */
-
-    splits = splits.filter(
-      (item, index, arr) =>
-        index ===
-        arr.findIndex(
-          x =>
-            x.date === item.date &&
-            x.ratio === item.ratio
-        )
-    );
-
-
     /* =========================
-       آخر تقسيم
+       5 — آخر تقسيم
     ========================= */
 
     let lastSplit = null;
 
-    if (splits.length > 0) {
+    if (splitList.length) {
 
       lastSplit =
-        splits[splits.length - 1];
+        splitList[splitList.length - 1];
 
     }
 
 
     /* =========================
-       بيانات ما بعد التقسيم
+       6 — بيانات ما بعد التقسيم
     ========================= */
 
     let postSplitRows = rows;
 
     if (lastSplit) {
 
-      postSplitRows = rows.filter(
-        x => x.date >= lastSplit.date
-      );
+      postSplitRows =
+        rows.filter(
+          x => x.date >= lastSplit.date
+        );
 
     }
 
 
     /* =========================
-       أعلى قمة بعد التقسيم
+       7 — أعلى قمة بعد التقسيم
     ========================= */
 
     let highestAfterSplit = null;
 
-    if (postSplitRows.length > 0) {
+    if (postSplitRows.length) {
 
       highestAfterSplit =
         postSplitRows.reduce(
@@ -336,12 +246,12 @@ exports.handler = async (event) => {
 
 
     /* =========================
-       أقل قاع بعد التقسيم
+       8 — أقل قاع بعد التقسيم
     ========================= */
 
     let lowestAfterSplit = null;
 
-    if (postSplitRows.length > 0) {
+    if (postSplitRows.length) {
 
       lowestAfterSplit =
         postSplitRows.reduce(
@@ -354,7 +264,7 @@ exports.handler = async (event) => {
 
 
     /* =========================
-       عدد الأيام بعد التقسيم
+       9 — عدد الأيام بعد التقسيم
     ========================= */
 
     let daysAfterSplit = null;
@@ -363,23 +273,24 @@ exports.handler = async (event) => {
 
       const splitDate =
         new Date(
-          lastSplit.date + "T00:00:00"
+          lastSplit.date +
+          "T00:00:00"
         );
 
       const latestDate =
         new Date(
-          latest.date + "T00:00:00"
+          latest.date +
+          "T00:00:00"
         );
-
-      const difference =
-        latestDate.getTime() -
-        splitDate.getTime();
 
       daysAfterSplit =
         Math.max(
           0,
           Math.floor(
-            difference /
+            (
+              latestDate.getTime() -
+              splitDate.getTime()
+            ) /
             (1000 * 60 * 60 * 24)
           )
         );
@@ -388,7 +299,27 @@ exports.handler = async (event) => {
 
 
     /* =========================
-       النتيجة
+       10 — نسبة التقسيم
+    ========================= */
+
+    let ratio = null;
+
+    if (
+      lastSplit &&
+      lastSplit.numerator &&
+      lastSplit.denominator
+    ) {
+
+      ratio =
+        lastSplit.numerator +
+        ":" +
+        lastSplit.denominator;
+
+    }
+
+
+    /* =========================
+       النتيجة النهائية
     ========================= */
 
     return send(200, {
@@ -413,25 +344,43 @@ exports.handler = async (event) => {
 
       split: lastSplit
         ? {
-            date: lastSplit.date,
-            ratio: lastSplit.ratio,
-            daysAfter: daysAfterSplit,
+
+            date:
+              lastSplit.date,
+
+            ratio,
+
+            numerator:
+              lastSplit.numerator,
+
+            denominator:
+              lastSplit.denominator,
+
+            daysAfter:
+              daysAfterSplit,
 
             highestAfter:
               highestAfterSplit
                 ? {
-                    price: highestAfterSplit.high,
-                    date: highestAfterSplit.date
+                    price:
+                      highestAfterSplit.high,
+
+                    date:
+                      highestAfterSplit.date
                   }
                 : null,
 
             lowestAfter:
               lowestAfterSplit
                 ? {
-                    price: lowestAfterSplit.low,
-                    date: lowestAfterSplit.date
+                    price:
+                      lowestAfterSplit.low,
+
+                    date:
+                      lowestAfterSplit.date
                   }
                 : null
+
           }
         : null
 
@@ -440,11 +389,17 @@ exports.handler = async (event) => {
   } catch (error) {
 
     return send(500, {
-      error: "حدث خطأ أثناء جلب بيانات السهم",
-      details: error.message
+
+      error:
+        "حدث خطأ أثناء جلب بيانات السهم",
+
+      details:
+        error.message
+
     });
 
   }
+
 };
 
 
@@ -459,13 +414,22 @@ function send(statusCode, body) {
     statusCode,
 
     headers: {
+
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Content-Type": "application/json; charset=utf-8"
+
+      "Access-Control-Allow-Headers":
+        "Content-Type",
+
+      "Access-Control-Allow-Methods":
+        "GET, OPTIONS",
+
+      "Content-Type":
+        "application/json; charset=utf-8"
+
     },
 
-    body: JSON.stringify(body)
+    body:
+      JSON.stringify(body)
 
   };
 
