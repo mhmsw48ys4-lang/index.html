@@ -32,9 +32,9 @@ exports.handler = async (event) => {
 
   try {
 
-    // =========================
-    // الأسعار اليومية
-    // =========================
+    /* =========================
+       الأسعار اليومية
+    ========================= */
 
     const dailyUrl =
       "https://www.alphavantage.co/query" +
@@ -76,6 +76,12 @@ exports.handler = async (event) => {
         close: Number(v["4. close"]),
         volume: Number(v["5. volume"])
       }))
+      .filter(x =>
+        Number.isFinite(x.open) &&
+        Number.isFinite(x.high) &&
+        Number.isFinite(x.low) &&
+        Number.isFinite(x.close)
+      )
       .sort((a, b) => a.date.localeCompare(b.date));
 
     if (rows.length < 30) {
@@ -87,9 +93,10 @@ exports.handler = async (event) => {
     const latest = rows[rows.length - 1];
     const previous = rows[rows.length - 2];
 
-    // =========================
-    // أعلى وأدنى سعر
-    // =========================
+
+    /* =========================
+       أعلى وأدنى سعر
+    ========================= */
 
     const lowest = rows.reduce(
       (a, b) => b.low < a.low ? b : a,
@@ -101,11 +108,12 @@ exports.handler = async (event) => {
       rows[0]
     );
 
-    // =========================
-    // جلب التقسيمات
-    // =========================
 
-    let splits = [];
+    /* =========================
+       التقسيمات
+    ========================= */
+
+    let splitData = null;
 
     try {
 
@@ -116,98 +124,254 @@ exports.handler = async (event) => {
         "&apikey=" + encodeURIComponent(apiKey);
 
       const splitResponse = await fetch(splitUrl);
-      const splitData = await splitResponse.json();
-
-      if (Array.isArray(splitData)) {
-        splits = splitData;
-      } else if (Array.isArray(splitData.data)) {
-        splits = splitData.data;
-      }
+      splitData = await splitResponse.json();
 
     } catch (error) {
-      splits = [];
+      splitData = null;
     }
 
-    // =========================
-    // ترتيب التقسيمات
-    // =========================
 
-    const normalizedSplits = splits
-      .map(x => {
+    /* =========================
+       استخراج التقسيمات
+       يدعم أكثر من صيغة
+    ========================= */
+
+    function extractSplits(obj) {
+
+      const result = [];
+
+      if (!obj || typeof obj !== "object") {
+        return result;
+      }
+
+      const possibleArrays = [];
+
+      if (Array.isArray(obj)) {
+        possibleArrays.push(obj);
+      }
+
+      if (Array.isArray(obj.data)) {
+        possibleArrays.push(obj.data);
+      }
+
+      if (Array.isArray(obj.splits)) {
+        possibleArrays.push(obj.splits);
+      }
+
+      for (const arr of possibleArrays) {
+
+        for (const item of arr) {
+
+          if (!item || typeof item !== "object") {
+            continue;
+          }
+
+          const date =
+            item.date ||
+            item["effective_date"] ||
+            item["effective date"] ||
+            item["ex_date"] ||
+            item["ex-date"];
+
+          const ratio =
+            item.split_factor ||
+            item["split_factor"] ||
+            item.split ||
+            item["split ratio"] ||
+            item["split_ratio"] ||
+            item.ratio;
+
+          if (date) {
+
+            result.push({
+              date: String(date),
+              ratio: ratio
+                ? String(ratio)
+                : null
+            });
+
+          }
+        }
+      }
+
+      return result;
+    }
+
+
+    let splits = extractSplits(splitData);
+
+
+    /* =========================
+       محاولة قراءة أي شكل متداخل
+    ========================= */
+
+    if (!splits.length && splitData && typeof splitData === "object") {
+
+      function scanObject(obj) {
+
+        if (!obj || typeof obj !== "object") {
+          return;
+        }
+
+        if (Array.isArray(obj)) {
+
+          for (const item of obj) {
+            scanObject(item);
+          }
+
+          return;
+        }
 
         const date =
-          x.date ||
-          x["date"] ||
-          x["ex-date"] ||
-          x["ex_date"];
+          obj.date ||
+          obj.effective_date ||
+          obj["effective_date"] ||
+          obj.ex_date ||
+          obj["ex_date"];
 
         const ratio =
-          x.split ||
-          x["split"] ||
-          x["split ratio"] ||
-          x["split_ratio"];
+          obj.split_factor ||
+          obj["split_factor"] ||
+          obj.split ||
+          obj.ratio;
 
-        return {
-          date,
-          ratio
-        };
+        if (date) {
 
-      })
-      .filter(x => x.date)
-      .sort((a, b) => a.date.localeCompare(b.date));
+          splits.push({
+            date: String(date),
+            ratio: ratio
+              ? String(ratio)
+              : null
+          });
+        }
 
-    // =========================
-    // آخر تقسيم
-    // =========================
+        for (const key of Object.keys(obj)) {
+
+          if (
+            typeof obj[key] === "object" &&
+            obj[key] !== null
+          ) {
+            scanObject(obj[key]);
+          }
+
+        }
+      }
+
+      scanObject(splitData);
+    }
+
+
+    /* =========================
+       تنظيف وترتيب التقسيمات
+    ========================= */
+
+    splits = splits
+      .filter(x =>
+        x.date &&
+        /^\d{4}-\d{2}-\d{2}$/.test(x.date)
+      )
+      .sort((a, b) =>
+        a.date.localeCompare(b.date)
+      );
+
+
+    /* إزالة التكرار */
+
+    splits = splits.filter(
+      (item, index, arr) =>
+        index ===
+        arr.findIndex(
+          x =>
+            x.date === item.date &&
+            x.ratio === item.ratio
+        )
+    );
+
+
+    /* =========================
+       آخر تقسيم
+    ========================= */
 
     let lastSplit = null;
 
-    if (normalizedSplits.length > 0) {
+    if (splits.length > 0) {
+
       lastSplit =
-        normalizedSplits[
-          normalizedSplits.length - 1
-        ];
+        splits[splits.length - 1];
+
     }
 
-    // =========================
-    // أعلى قمة بعد التقسيم
-    // =========================
 
-    let highestAfterSplit = null;
+    /* =========================
+       بيانات ما بعد التقسيم
+    ========================= */
+
+    let postSplitRows = rows;
 
     if (lastSplit) {
 
-      const afterSplitRows = rows.filter(
+      postSplitRows = rows.filter(
         x => x.date >= lastSplit.date
       );
 
-      if (afterSplitRows.length > 0) {
-
-        highestAfterSplit =
-          afterSplitRows.reduce(
-            (a, b) =>
-              b.high > a.high ? b : a,
-            afterSplitRows[0]
-          );
-
-      }
     }
 
-    // =========================
-    // كم يوم بعد التقسيم
-    // =========================
+
+    /* =========================
+       أعلى قمة بعد التقسيم
+    ========================= */
+
+    let highestAfterSplit = null;
+
+    if (postSplitRows.length > 0) {
+
+      highestAfterSplit =
+        postSplitRows.reduce(
+          (a, b) =>
+            b.high > a.high ? b : a,
+          postSplitRows[0]
+        );
+
+    }
+
+
+    /* =========================
+       أقل قاع بعد التقسيم
+    ========================= */
+
+    let lowestAfterSplit = null;
+
+    if (postSplitRows.length > 0) {
+
+      lowestAfterSplit =
+        postSplitRows.reduce(
+          (a, b) =>
+            b.low < a.low ? b : a,
+          postSplitRows[0]
+        );
+
+    }
+
+
+    /* =========================
+       عدد الأيام بعد التقسيم
+    ========================= */
 
     let daysAfterSplit = null;
 
     if (lastSplit) {
 
       const splitDate =
-        new Date(lastSplit.date + "T00:00:00");
+        new Date(
+          lastSplit.date + "T00:00:00"
+        );
 
       const latestDate =
-        new Date(latest.date + "T00:00:00");
+        new Date(
+          latest.date + "T00:00:00"
+        );
 
-      const milliseconds =
+      const difference =
         latestDate.getTime() -
         splitDate.getTime();
 
@@ -215,15 +379,17 @@ exports.handler = async (event) => {
         Math.max(
           0,
           Math.floor(
-            milliseconds /
+            difference /
             (1000 * 60 * 60 * 24)
           )
         );
+
     }
 
-    // =========================
-    // إرسال النتيجة
-    // =========================
+
+    /* =========================
+       النتيجة
+    ========================= */
 
     return send(200, {
 
@@ -248,7 +414,7 @@ exports.handler = async (event) => {
       split: lastSplit
         ? {
             date: lastSplit.date,
-            ratio: lastSplit.ratio || null,
+            ratio: lastSplit.ratio,
             daysAfter: daysAfterSplit,
 
             highestAfter:
@@ -256,6 +422,14 @@ exports.handler = async (event) => {
                 ? {
                     price: highestAfterSplit.high,
                     date: highestAfterSplit.date
+                  }
+                : null,
+
+            lowestAfter:
+              lowestAfterSplit
+                ? {
+                    price: lowestAfterSplit.low,
+                    date: lowestAfterSplit.date
                   }
                 : null
           }
@@ -274,13 +448,14 @@ exports.handler = async (event) => {
 };
 
 
-// =========================
-// إرسال JSON
-// =========================
+/* =========================
+   إرسال JSON
+========================= */
 
 function send(statusCode, body) {
 
   return {
+
     statusCode,
 
     headers: {
@@ -291,5 +466,7 @@ function send(statusCode, body) {
     },
 
     body: JSON.stringify(body)
+
   };
+
 }
