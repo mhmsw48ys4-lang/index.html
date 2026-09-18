@@ -31,20 +31,24 @@ exports.handler = async (event) => {
   }
 
   try {
-    const url =
+
+    // =========================
+    // الأسعار اليومية
+    // =========================
+
+    const dailyUrl =
       "https://www.alphavantage.co/query" +
       "?function=TIME_SERIES_DAILY" +
       "&symbol=" + encodeURIComponent(symbol) +
       "&outputsize=compact" +
       "&apikey=" + encodeURIComponent(apiKey);
 
-    const response = await fetch(url);
-    const data = await response.json();
+    const dailyResponse = await fetch(dailyUrl);
+    const data = await dailyResponse.json();
 
     if (data["Error Message"]) {
       return send(404, {
-        error: "رمز السهم غير صحيح أو غير متوفر",
-        details: data["Error Message"]
+        error: "رمز السهم غير صحيح أو غير متوفر"
       });
     }
 
@@ -83,6 +87,10 @@ exports.handler = async (event) => {
     const latest = rows[rows.length - 1];
     const previous = rows[rows.length - 2];
 
+    // =========================
+    // أعلى وأدنى سعر
+    // =========================
+
     const lowest = rows.reduce(
       (a, b) => b.low < a.low ? b : a,
       rows[0]
@@ -93,38 +101,195 @@ exports.handler = async (event) => {
       rows[0]
     );
 
+    // =========================
+    // جلب التقسيمات
+    // =========================
+
+    let splits = [];
+
+    try {
+
+      const splitUrl =
+        "https://www.alphavantage.co/query" +
+        "?function=SPLITS" +
+        "&symbol=" + encodeURIComponent(symbol) +
+        "&apikey=" + encodeURIComponent(apiKey);
+
+      const splitResponse = await fetch(splitUrl);
+      const splitData = await splitResponse.json();
+
+      if (Array.isArray(splitData)) {
+        splits = splitData;
+      } else if (Array.isArray(splitData.data)) {
+        splits = splitData.data;
+      }
+
+    } catch (error) {
+      splits = [];
+    }
+
+    // =========================
+    // ترتيب التقسيمات
+    // =========================
+
+    const normalizedSplits = splits
+      .map(x => {
+
+        const date =
+          x.date ||
+          x["date"] ||
+          x["ex-date"] ||
+          x["ex_date"];
+
+        const ratio =
+          x.split ||
+          x["split"] ||
+          x["split ratio"] ||
+          x["split_ratio"];
+
+        return {
+          date,
+          ratio
+        };
+
+      })
+      .filter(x => x.date)
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    // =========================
+    // آخر تقسيم
+    // =========================
+
+    let lastSplit = null;
+
+    if (normalizedSplits.length > 0) {
+      lastSplit =
+        normalizedSplits[
+          normalizedSplits.length - 1
+        ];
+    }
+
+    // =========================
+    // أعلى قمة بعد التقسيم
+    // =========================
+
+    let highestAfterSplit = null;
+
+    if (lastSplit) {
+
+      const afterSplitRows = rows.filter(
+        x => x.date >= lastSplit.date
+      );
+
+      if (afterSplitRows.length > 0) {
+
+        highestAfterSplit =
+          afterSplitRows.reduce(
+            (a, b) =>
+              b.high > a.high ? b : a,
+            afterSplitRows[0]
+          );
+
+      }
+    }
+
+    // =========================
+    // كم يوم بعد التقسيم
+    // =========================
+
+    let daysAfterSplit = null;
+
+    if (lastSplit) {
+
+      const splitDate =
+        new Date(lastSplit.date + "T00:00:00");
+
+      const latestDate =
+        new Date(latest.date + "T00:00:00");
+
+      const milliseconds =
+        latestDate.getTime() -
+        splitDate.getTime();
+
+      daysAfterSplit =
+        Math.max(
+          0,
+          Math.floor(
+            milliseconds /
+            (1000 * 60 * 60 * 24)
+          )
+        );
+    }
+
+    // =========================
+    // إرسال النتيجة
+    // =========================
+
     return send(200, {
+
       symbol,
+
       data,
+
       latest,
+
       previous,
+
       lowest: {
         price: lowest.low,
         date: lowest.date
       },
+
       highest: {
         price: highest.high,
         date: highest.date
-      }
+      },
+
+      split: lastSplit
+        ? {
+            date: lastSplit.date,
+            ratio: lastSplit.ratio || null,
+            daysAfter: daysAfterSplit,
+
+            highestAfter:
+              highestAfterSplit
+                ? {
+                    price: highestAfterSplit.high,
+                    date: highestAfterSplit.date
+                  }
+                : null
+          }
+        : null
+
     });
 
   } catch (error) {
+
     return send(500, {
       error: "حدث خطأ أثناء جلب بيانات السهم",
       details: error.message
     });
+
   }
 };
 
+
+// =========================
+// إرسال JSON
+// =========================
+
 function send(statusCode, body) {
+
   return {
     statusCode,
+
     headers: {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Headers": "Content-Type",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
       "Content-Type": "application/json; charset=utf-8"
     },
+
     body: JSON.stringify(body)
   };
 }
