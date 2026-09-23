@@ -261,15 +261,21 @@ function getDebt(facts, rows, filing) {
 }
 
 function getDeposits(facts, rows, filing) {
-  // Do not turn missing disclosure into zero.
-  // Also do not reuse an older InterestBearingDeposits fact.
-  const re = /interest[- ]bearing\s+(deposits?|securities|investments?)/i;
+  // Count only instruments that are explicitly identifiable as
+  // interest-bearing deposits / money-market instruments.
+  // Do not count ordinary cash or generic marketable securities.
+  const patterns = [
+    /^interest[- ]bearing\s+(deposits?|securities|investments?)$/i,
+    /^money\s+market\s+(mutual\s+)?funds?$/i
+  ];
+
   for (const r of rows) {
-    if (re.test(r.label) && r.values.length) {
+    if (!r.values.length) continue;
+    if (patterns.some(re => re.test(r.label))) {
       return {
         value: Math.abs(r.values[0]),
         label: r.label,
-        source: "SEC filing — explicit interest-bearing deposits/investments"
+        source: "SEC filing — explicit interest-bearing / money-market instrument"
       };
     }
   }
@@ -283,9 +289,7 @@ function getDeposits(facts, rows, filing) {
 }
 
 function getInterest(facts, rows) {
-  // Only accept a standalone interest-income line from the selected filing.
-  // Composite lines such as "interest income and unrealized gains" and
-  // "financing income, net" are deliberately rejected.
+  // Preferred: a separately disclosed interest-income line.
   for (const r of rows) {
     if (/^interest\s+income(?:,\s*net)?$/i.test(r.label) && r.values.length) {
       return {
@@ -296,7 +300,19 @@ function getInterest(facts, rows) {
     }
   }
 
-  // Missing standalone disclosure = insufficient data.
+  // Conservative fallback: some companies report interest inside a
+  // financing-income line. Do not pretend it is an exact interest figure;
+  // use it as a disclosed financing-income upper bound for the 5% screen.
+  for (const r of rows) {
+    if (/^financing\s+income(?:,\s*net)?$/i.test(r.label) && r.values.length) {
+      return {
+        value: Math.abs(r.values[0]),
+        label: r.label + " (conservative upper bound)",
+        source: "SEC filing — financing income; interest not separately disclosed"
+      };
+    }
+  }
+
   return null;
 }
 
