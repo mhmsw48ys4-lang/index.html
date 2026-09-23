@@ -99,10 +99,21 @@ exports.handler = async (event) => {
     const all = [];
     const days = dateList(from, to);
 
-    for (let i = 0; i < days.length; i += 10) {
-      const batch = days.slice(i, i + 10);
-      const results = await Promise.all(batch.map(fetchDay));
-      for (const rows of results) all.push(...rows);
+    // نرفع عدد الأيام المتوازية حتى لا يتجاوز طلب الـ100 يوم مهلة Netlify.
+    // أي يوم يفشل لا يلغي بقية المسح؛ نكمل بالأيام التي نجحت.
+    const failedDays = [];
+
+    for (let i = 0; i < days.length; i += 25) {
+      const batch = days.slice(i, i + 25);
+      const results = await Promise.allSettled(batch.map(fetchDay));
+
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          all.push(...result.value);
+        } else {
+          failedDays.push(batch[index]);
+        }
+      });
     }
 
     const unique = {};
@@ -114,7 +125,10 @@ exports.handler = async (event) => {
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ events: Object.values(unique) })
+      body: JSON.stringify({
+        events: Object.values(unique),
+        failedDays
+      })
     };
 
   } catch (error) {
