@@ -575,8 +575,28 @@ function extractStatementAmount(text, labelPattern) {
 }
 
 function findProhibitedIncome(text, usgaap, filing) {
-  const section = getOperationsSection(text);
-  const sources = [section, text].filter(Boolean);
+  const raw = String(text || "");
+
+  // Prefer the filing's explicit current-quarter reconciliation. This avoids
+  // accidentally reading a dash from a flattened SEC table or a prior-period
+  // column before the actual interest-income amount.
+  const attributable = raw.match(
+    /Other income \(expenses\), net,[\s\S]{0,900}?is attributable to[\s\S]{0,500}?interest income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i
+  );
+
+  if (attributable) {
+    const value = parseNumber(attributable[1]);
+    if (Number.isFinite(value)) {
+      return {
+        value: Math.abs(value),
+        label: "Interest income",
+        source: "SEC MD&A — current-quarter interest income"
+      };
+    }
+  }
+
+  const section = getOperationsSection(raw);
+  const sources = [section, raw].filter(Boolean);
 
   for (const sourceText of sources) {
     const value = findLabeledFinancialValue(
@@ -595,7 +615,6 @@ function findProhibitedIncome(text, usgaap, filing) {
 
   return null;
 }
-
 function findTotalIncome(text, usgaap, filing) {
   // Prefer the filing's explicit current-period MD&A reconciliation when it
   // lists the positive income components. This avoids mixing statement columns
@@ -697,7 +716,7 @@ function findLabeledFinancialValue(text, labelRegex) {
   if (!labelMatch) return null;
 
   const tail = m[0].slice(labelMatch.index + labelMatch[0].length);
-  const tokens = tail.match(/(?:—|–|-|\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?)/g) || [];
+  const tokens = tail.match(/(?:—|–|\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?)/g) || [];
 
   for (const token of tokens) {
     const t = String(token).trim();
@@ -711,7 +730,7 @@ function findLabeledFinancialValue(text, labelRegex) {
 function firstFinancialValueAfterLabel(line, labelRegex) {
   const rest = String(line || "").replace(labelRegex, " ");
   // Preserve em-dash as zero. Ignore dates/years that can appear later.
-  const tokenRe = /(?:—|–|-|\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?)/g;
+  const tokenRe = /(?:—|–|\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?)/g;
   const tokens = rest.match(tokenRe) || [];
   for (const raw of tokens) {
     const t = String(raw).trim();
