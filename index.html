@@ -1821,20 +1821,14 @@ async function fetchSplitCalendar(){
   const to=new Date().toISOString().slice(0,10);
 
   const url=
-    "https://api.nasdaq.com/api/calendar/splits"+
+    "/.netlify/functions/splits"+
     "?fromdate="+encodeURIComponent(from)+
-    "&todate="+encodeURIComponent(to)+
-    "&limit=5000";
+    "&todate="+encodeURIComponent(to);
 
-  const response=await fetch(url,{
-    cache:"no-store",
-    headers:{
-      "Accept":"application/json, text/plain, */*"
-    }
-  });
+  const response=await fetch(url,{cache:"no-store"});
 
   if(!response.ok)
-    throw new Error("تعذر جلب قائمة التقسيمات من Nasdaq");
+    throw new Error("تعذر جلب قائمة التقسيمات من خادم الموقع");
 
   const json=await response.json();
   const rows=json?.data?.rows||[];
