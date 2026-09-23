@@ -53,15 +53,26 @@ exports.handler = async (event) => {
       "https://www.sec.gov/Archives/edgar/data/" +
       cikNumber + "/" + accessionNoDash + "/";
 
-    // Read the complete SEC submission. This is important for foreign issuers:
-    // their financial statements are often attached to a 6-K rather than the
-    // primary 6-K document itself.
-    let filingUrl = baseUrl + String(filing.accession) + ".txt";
-    if (filing.form === "6-K" && filing.primaryDocument) {
-      filingUrl = baseUrl + String(filing.primaryDocument);
+    // Prefer the filing's primary financial document for 10-Q/10-K filings.
+    // It is much smaller and more reliable on Netlify than downloading the
+    // complete SEC submission text. Fall back to the complete submission if
+    // the primary document is unavailable.
+    const submissionUrl = baseUrl + String(filing.accession) + ".txt";
+    const primaryUrl = filing.primaryDocument
+      ? baseUrl + String(filing.primaryDocument)
+      : null;
+
+    let rawSubmission;
+    if (primaryUrl) {
+      try {
+        rawSubmission = await fetchText(primaryUrl, secHeaders);
+      } catch (_) {
+        rawSubmission = await fetchText(submissionUrl, secHeaders);
+      }
+    } else {
+      rawSubmission = await fetchText(submissionUrl, secHeaders);
     }
 
-    const rawSubmission = await fetchText(filingUrl, secHeaders);
     const filingText = cleanText(rawSubmission);
 
     // Companyfacts is still used when available, but it is no longer the only
