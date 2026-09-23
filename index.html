@@ -1924,9 +1924,38 @@ async function autoScanSplits(){
     let dataOk=0;
     let noBase=0;
 
-    /* لا نرسل 10 طلبات Yahoo دفعة واحدة؛ ذلك قد يؤدي إلى 429
-       من Yahoo ويجعل النتيجة صفر رغم وجود أسهم. */
-    const batchSize=3;
+    /*
+      لا نخلي التطبيق يظل معلقاً أثناء فحص أكثر من 100 سهم.
+      نفحص 8 أسهم بالتوازي، وكل طلب له مهلة 8 ثوانٍ.
+      إذا تعثر سهم واحد لا يوقف بقية المسح.
+    */
+    const batchSize=8;
+
+    async function getStockForAutoScan(symbol){
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),8000);
+
+      try{
+        const response=await fetch(
+          "/.netlify/functions/stock?symbol="+encodeURIComponent(symbol)+"&scan=1",
+          {cache:"no-store",signal:controller.signal}
+        );
+
+        let result;
+        try{ result=await response.json(); }
+        catch(e){ throw new Error("استجابة غير صحيحة"); }
+
+        if(!response.ok)
+          throw new Error(result?.error||"فشل جلب البيانات");
+
+        return result;
+      }catch(e){
+        if(e.name==="AbortError") throw new Error("انتهت مهلة 8 ثوانٍ");
+        throw e;
+      }finally{
+        clearTimeout(timer);
+      }
+    }
 
     for(let i=0;i<symbols.length;i+=batchSize){
       const batch=symbols.slice(i,i+batchSize);
@@ -1937,7 +1966,7 @@ async function autoScanSplits(){
         " من "+symbols.length+"...";
 
       const settled=await Promise.allSettled(batch.map(async symbol=>{
-        const result=await getStock(symbol);
+        const result=await getStockForAutoScan(symbol);
         dataOk++;
 
         const rows=makeRows(result.data);
@@ -1949,13 +1978,6 @@ async function autoScanSplits(){
         }
 
         const a=analyze(result);
-
-        /*
-          pivot.js هو الذي يحدد كون المرشحين بسعر $1–$7.
-          لا نعيد فلترة latest.close هنا، لأن Yahoo قد يرجع
-          قيمة مختلفة/متأخرة عن قيمة قائمة الفرز، وهذا كان
-          يجعلنا نفحص 123 سهم ثم نستبعدها كلها.
-        */
 
         a.pivot=base.pivot;
         a.stability={
@@ -2452,4 +2474,4 @@ addStock();
 </body>
 </html>
 
-<!-- Netlify redeploy trigger: 2026-09-23-base-only-v3 -->
+<!-- Netlify redeploy trigger: 2026-09-23-base-only-v4 -->
