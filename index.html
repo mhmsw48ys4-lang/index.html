@@ -1860,7 +1860,7 @@ async function autoScanSplits(){
   const status=document.getElementById("scanStatus");
   const results=document.getElementById("scanResults");
   results.innerHTML="";
-  status.textContent="جاري مسح الأسهم $1–$7 والبحث عن هبوط ثبت عند القاع 3–4 أيام...";
+  status.textContent="جاري مسح الأسهم $1–$7 والبحث عن هبوط ثبت عند القاع 3 أيام أو أكثر...";
 
   try{
     const response=await fetch("/.netlify/functions/pivot",{cache:"no-store"});
@@ -1906,7 +1906,6 @@ async function autoScanSplits(){
           a.pivot &&
           a.stability &&
           stableDays>=3 &&
-          stableDays<=4 &&
           Number.isFinite(price) &&
           price>=1 &&
           price<=7
@@ -1924,11 +1923,11 @@ async function autoScanSplits(){
 
     if(!found.length){
       status.textContent="انتهى المسح — لم يظهر سهم ثبت عند القاع 3 أو 4 أيام ضمن $1–$7.";
-      results.innerHTML='<div class="empty">لم يظهر سهم يحقق: هبوط + قاع + ثبات 3 أو 4 أيام.</div>';
+      results.innerHTML='<div class="empty">لم يظهر سهم يحقق: هبوط + قاع + ثبات 3 أيام أو أكثر.</div>';
       return;
     }
 
-    status.innerHTML="تم المسح ✓ — وجدنا "+found.length+" سهم عنده قاع ثابت 3–4 أيام.";
+    status.innerHTML="تم المسح ✓ — وجدنا "+found.length+" سهم عنده قاع ثابت 3 أيام أو أكثر.";
     results.innerHTML=found.map(renderPivotAutoCard).join("");
   }catch(error){
     status.innerHTML='<div class="error">تعذر تشغيل مسح الارتكاز: '+escapeHtml(error.message)+'</div>';
