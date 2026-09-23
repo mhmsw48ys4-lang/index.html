@@ -430,8 +430,8 @@ function flowFacts(facts, names, filing) {
 function matchesFiling(item, filing) {
   if (!filing) return true;
 
-  const wantedAccn = String(filing.accession || "").toLowerCase();
-  const itemAccn = String(item.accn || "").toLowerCase();
+  const wantedAccn = String(filing.accession || "").replace(/-/g, "").toLowerCase();
+  const itemAccn = String(item.accn || "").replace(/-/g, "").toLowerCase();
   const wantedDate = String(filing.reportDate || "");
 
   // When SEC gives accession provenance, require the exact filing.
@@ -537,6 +537,7 @@ function toNumber(text) {
   const s = String(text || "")
     .replace(/,/g, "")
     .replace(/\$/g, "")
+    .replace(/%/g, "")
     .trim();
 
   if (!s) return null;
