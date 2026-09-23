@@ -9,49 +9,72 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers, body: "" };
 
   try {
-    // نأخذ قائمة أوسع من الأسهم الأمريكية من Nasdaq ثم نرشح السعر والحجم.
-    // بعد ذلك يطبق index.html شروط الارتكاز الأصلية على كل مرشح.
-    const url =
-      "https://api.nasdaq.com/api/screener/stocks" +
-      "?tableonly=true&limit=5000&offset=0";
+    // قوائم Yahoo الجاهزة تعمل عبر GET ولا تحتاج custom screener.
+    // نجمع عدة قوائم لتكوين كون مرشحين واسع، ثم index.html يفحص
+    // القاع وثبات 3-4 أيام.
+    const screens = [
+      "most_actives",
+      "small_cap_gainers",
+      "aggressive_small_caps",
+      "day_gainers",
+      "day_losers"
+    ];
 
-    const response = await fetch(url, {
-      headers: {
-        "Accept": "application/json, text/plain, */*",
-        "User-Agent": "Mozilla/5.0",
-        "Referer": "https://www.nasdaq.com/"
-      }
-    });
+    async function getScreen(scrId) {
+      const url =
+        "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved" +
+        "?formatted=false&lang=en-US&region=US" +
+        "&scrIds=" + encodeURIComponent(scrId) +
+        "&count=250&start=0" +
+        "&corsDomain=finance.yahoo.com";
 
-    if (!response.ok) {
-      throw new Error("Nasdaq screener HTTP " + response.status);
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          "Accept": "application/json,text/plain,*/*"
+        }
+      });
+
+      if (!response.ok) throw new Error(scrId + " HTTP " + response.status);
+
+      const json = await response.json();
+      return json?.finance?.result?.[0]?.quotes || [];
     }
 
-    const json = await response.json();
-    const rows = json?.data?.rows || [];
+    const lists = await Promise.allSettled(screens.map(getScreen));
+    const map = new Map();
 
-    const symbols = rows.map(x => {
-      const symbol = String(x.symbol || x.ticker || "").trim().toUpperCase();
-      const rawPrice = x.lastsale ?? x.lastSale ?? x.price ?? "";
-      const price = Number(String(rawPrice).replace(/[$,]/g, ""));
-      const rawVol = x.volume ?? x.avgvol3m ?? x.averageVolume ?? 0;
-      const volume = Number(String(rawVol).replace(/[,]/g, ""));
-      return { symbol, price, volume };
-    }).filter(x =>
-      x.symbol &&
-      /^[-A-Z0-9.]+$/.test(x.symbol) &&
-      Number.isFinite(x.price) &&
-      x.price >= 1 &&
-      x.price <= 7 &&
-      (!x.volume || x.volume >= 100000)
-    );
+    for (const item of lists) {
+      if (item.status !== "fulfilled") continue;
+
+      for (const q of item.value) {
+        const symbol = String(q.symbol || "").trim().toUpperCase();
+        const price = Number(q.regularMarketPrice);
+        const avgVol = Number(
+          q.averageDailyVolume3Month ??
+          q.averageDailyVolume10Day ??
+          0
+        );
+
+        if (
+          symbol &&
+          /^[-A-Z0-9.]+$/.test(symbol) &&
+          Number.isFinite(price) &&
+          price >= 1 &&
+          price <= 7 &&
+          avgVol >= 100000
+        ) {
+          map.set(symbol, q);
+        }
+      }
+    }
 
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        symbols: [...new Set(symbols.map(x => x.symbol))],
-        count: symbols.length
+        symbols: [...map.keys()],
+        count: map.size
       })
     };
   } catch (error) {
