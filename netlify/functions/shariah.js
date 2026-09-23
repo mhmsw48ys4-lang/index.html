@@ -447,76 +447,51 @@ function findSharesOutstanding(text, usgaap, dei, filing) {
 }
 
 function findInterestBearingDebt(text, usgaap, filing) {
-  // AAOIFI 3/4/2: count explicitly interest-bearing debt only.
-  // Parse the actual balance-sheet row first. The first financial number on
-  // the row is the current-period amount; later numbers are comparative data.
-  const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-
+  const lines = String(text || "").split(/\r?\n/).map(normalizeLine).filter(Boolean);
   const debtPatterns = [
-    /^(?:current portion of )?convertible notes? payable\b/i,
-    /^(?:current portion of )?convertible debt\b/i,
-    /^(?:current portion of )?notes payable\b/i,
-    /^(?:current portion of )?bank borrowings?\b/i,
-    /^(?:current portion of )?term loans?\b/i,
-    /^(?:current portion of )?loans payable\b/i,
-    /^(?:current portion of )?long[- ]term borrowings?\b/i,
-    /^(?:current portion of )?short[- ]term borrowings?\b/i,
+    /^(?:current portion of\s+)?convertible notes? payable\b/i,
+    /^(?:current portion of\s+)?convertible debt\b/i,
+    /^(?:current portion of\s+)?notes payable\b/i,
+    /^(?:current portion of\s+)?bank borrowings?\b/i,
+    /^(?:current portion of\s+)?term loans?\b/i,
+    /^(?:current portion of\s+)?loans payable\b/i,
+    /^(?:current portion of\s+)?long[- ]term borrowings?\b/i,
+    /^(?:current portion of\s+)?short[- ]term borrowings?\b/i,
     /^senior notes?\b/i,
     /^interest[- ]bearing debt\b/i
   ];
 
-  const matched=[];
-  for(let i=0;i<lines.length;i++){
-    const line=lines[i];
-    const pattern=debtPatterns.find(re=>re.test(line));
-    if(!pattern) continue;
-
-    const value=firstFinancialValueAfterLabel(line,pattern);
-    if(value==null) continue;
-
-    matched.push({
-      label:line.slice(0,220),
-      value:Math.abs(value)*inferLineScale(lines,i)
-    });
+  const rows = [];
+  for (let i = 0; i < lines.length; i++) {
+    const pattern = debtPatterns.find(re => re.test(lines[i]));
+    if (!pattern) continue;
+    const value = firstFinancialValueAfterLabel(lines[i], pattern);
+    if (value == null) continue;
+    rows.push({ value: Math.abs(value) * inferLineScale(lines, i), label: lines[i] });
   }
 
-  if(matched.length){
-    // Avoid double-counting the same balance-sheet row.
-    const unique=[];
-    const seen=new Set();
-    for(const item of matched){
-      const key=item.label+"|"+item.value;
-      if(seen.has(key)) continue;
+  if (rows.length) {
+    const unique = [];
+    const seen = new Set();
+    for (const row of rows) {
+      const key = row.label + "|" + row.value;
+      if (seen.has(key)) continue;
       seen.add(key);
-      unique.push(item);
+      unique.push(row);
     }
-
     return {
-      value:unique.reduce((sum,x)=>sum+x.value,0),
-      source:unique.map(x=>x.label).slice(0,6).join(" | ")
+      value: unique.reduce((sum, row) => sum + row.value, 0),
+      source: unique.map(row => row.label).slice(0, 6).join(" | ")
     };
   }
 
-  // If the balance sheet explicitly reaches Total liabilities and contains
-  // no debt-like row, zero is valid. Otherwise the disclosure is insufficient.
-  const totalLiabilityIndex=lines.findIndex(x=>/^total liabilities\b/i.test(x));
-  if(totalLiabilityIndex>=0){
-    const start=Math.max(0,totalLiabilityIndex-80);
-    const liabilityLines=lines.slice(start,totalLiabilityIndex+1);
-    const debtLike=liabilityLines.some(x=>
-      /(?:convertible notes? payable|convertible debt|notes payable|bank borrowings?|term loans?|loans payable|long[- ]term borrowings?|short[- ]term borrowings?|senior notes?|interest[- ]bearing debt)\b/i.test(x)
-    );
-    if(!debtLike){
-      return {value:0,source:"SEC balance sheet — no interest-bearing debt line disclosed"};
-    }
-  }
-
-  if (/\\btotal liabilities\\b/i.test(text) && /\\btotal assets\\b/i.test(text)) {
-    return {value:0,source:"SEC balance sheet — no interest-bearing debt line disclosed"};
+  if (/\btotal assets\b/i.test(text) && /\btotal liabilities\b/i.test(text)) {
+    return { value: 0, source: "SEC balance sheet — no interest-bearing debt line disclosed" };
   }
 
   return null;
 }
+
 function extractLabeledAmount(text, regex) {
   const m = String(text || "").match(regex);
   if (!m) return null;
@@ -525,17 +500,16 @@ function extractLabeledAmount(text, regex) {
 }
 
 function findInterestTakingDeposits(text, usgaap, filing) {
-  const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  const lines = String(text || "").split(/\r?\n/).map(normalizeLine).filter(Boolean);
   const regex = /interest[- ]bearing deposits?|interest[- ]taking deposits?|deposits? (?:that|which) (?:earn|take) interest/i;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!regex.test(line)) continue;
-    const value = firstFinancialValueAfterLabel(line, regex);
+    if (!regex.test(lines[i])) continue;
+    const value = firstFinancialValueAfterLabel(lines[i], regex);
     if (value != null) {
       return {
         value: Math.abs(value) * inferLineScale(lines, i),
-        source: line.slice(0, 220)
+        source: lines[i]
       };
     }
   }
@@ -550,13 +524,8 @@ function findInterestTakingDeposits(text, usgaap, filing) {
     return { value: Math.abs(fact.value), source: "SEC XBRL" };
   }
 
-  // Ordinary cash is NOT treated as an interest-taking deposit merely because
-  // it appears on the balance sheet. No explicit disclosure = insufficient.
-  if (/\\btotal assets\\b/i.test(text) && /\\btotal liabilities\\b/i.test(text)) {
-    return {
-      value: 0,
-      source: "SEC balance sheet — no interest-bearing deposits disclosed"
-    };
+  if (/\btotal assets\b/i.test(text) && /\btotal liabilities\b/i.test(text)) {
+    return { value: 0, source: "SEC balance sheet — no interest-bearing deposits disclosed" };
   }
 
   return null;
@@ -577,7 +546,7 @@ function getPrimaryOperationsStatementSection(text) {
 
     const score =
       (/(?:three months ended|three and six months ended|quarter ended|months ended)/i.test(section) ? 3 : 0) +
-      (/(?:^|\n)\s*Sales\s*(?:\||$)/im.test(section) ? 4 : 0) +
+      (/(?:^|\n)\s*Sales\b/im.test(section) ? 4 : 0) +
       (/(?:^|\n)\s*Interest income\b/im.test(section) ? 4 : 0) +
       (/(?:^|\n)\s*Total operating expenses\b/im.test(section) ? 2 : 0) +
       (/(?:^|\n)\s*Loss from operations\b/im.test(section) ? 2 : 0) +
@@ -729,48 +698,24 @@ function extractSecCurrentQuarterIncomeComponents(text) {
   };
 }
 function findProhibitedIncome(text, usgaap, filing) {
-  // For ordinary operating companies, the directly identifiable prohibited
-  // income here is interest income. Read the current-quarter row first.
-  const section=getPrimaryOperationsStatementSection(text);
-  if(section){
-    const lines=section.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-    for(const line of lines){
-      if(!/^Interest income(?:,?\s+net)?\b/i.test(line)) continue;
-      const value=firstFinancialValueAfterLabel(
-        line,
-        /^Interest income(?:,?\s+net)?\b/i
-      );
-      if(value!=null){
-        return {
-          value:Math.abs(value),
-          label:"Interest income",
-          source:"SEC Statement of Operations — current quarter"
-        };
-      }
-    }
-  }
+  const lines = String(text || "").split(/\r?\n/).map(normalizeLine).filter(Boolean);
 
-  // Robust fallback for SEC HTML that flattens table rows differently.
-  // Stop at the next financial-statement label so a comparative-period
-  // number elsewhere in the filing cannot be mistaken for the current row.
-  const raw=String(text||"");
-  const m=raw.match(
-    /(?:^|\n|\|)\s*Interest income(?:,?\s+net)?\s*(?:\||:)?\s*\$?\s*\(?([0-9][0-9,]*(?:\.\d+)?)\)?/im
-  );
-  if(m){
-    const value=parseNumber(m[1]);
-    if(Number.isFinite(value)){
+  for (const line of lines) {
+    if (!/^Interest income(?:,?\s+net)?\b/i.test(line)) continue;
+    const value = firstFinancialValueAfterLabel(line, /^Interest income(?:,?\s+net)?\b/i);
+    if (value != null) {
       return {
-        value:Math.abs(value),
-        label:"Interest income",
-        source:"SEC filing — Interest income row"
+        value: Math.abs(value),
+        label: "Interest income",
+        source: "SEC Statement of Operations — current quarter"
       };
     }
   }
 
-  if (/statements of operations/i.test(raw) &&
-      /(?:sales|revenue|revenues)\\b/i.test(raw) &&
-      /(?:net loss|loss before income taxes)\\b/i.test(raw)) {
+  if (
+    /(?:^|\n)\s*(?:Sales|Revenue|Revenues|Net sales)\b/im.test(String(text || "")) &&
+    /(?:^|\n)\s*Net loss\b/im.test(String(text || ""))
+  ) {
     return {
       value: 0,
       label: "No interest income disclosed",
@@ -780,6 +725,7 @@ function findProhibitedIncome(text, usgaap, filing) {
 
   return null;
 }
+
 function extractFlattenedIncomeComponents(text) {
   const raw = String(text || "");
   const labels = [
@@ -902,57 +848,25 @@ function extractCurrentQuarterPositiveIncome(text) {
 }
 
 function findTotalIncome(text, usgaap, filing) {
-  // AAOIFI income denominator: current-quarter operating sales/revenue.
-  // Do not use fair-value gains, warrant remeasurement gains, or other
-  // non-operating accounting movements as the denominator.
-  const section=getPrimaryOperationsStatementSection(text);
+  const lines = String(text || "").split(/\r?\n/).map(normalizeLine).filter(Boolean);
 
-  if(section){
-    const lines=section.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-    const patterns=[
-      /^Sales\b/i,
-      /^Net sales\b/i,
-      /^Revenue(?:s)?\b/i
-    ];
-
-    for(const pattern of patterns){
-      for(const line of lines){
-        if(!pattern.test(line)) continue;
-        const value=firstFinancialValueAfterLabel(line,pattern);
-        if(value!=null && value>0){
-          return {
-            value:Math.abs(value),
-            source:"SEC Statement of Operations — current-quarter sales/revenue"
-          };
-        }
-      }
-    }
-  }
-
-  // Robust fallback for flattened SEC tables. Prefer the first Sales/Revenue
-  // row in the selected filing because the selected filing is already the
-  // latest financial filing.
-  const raw=String(text||"");
-  const patterns=[
-    /(?:^|\n|\|)\s*Sales\s*(?:\||:)\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/im,
-    /(?:^|\n|\|)\s*Net sales\s*(?:\||:)\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/im,
-    /(?:^|\n|\|)\s*Revenue(?:s)?\s*(?:\||:)\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/im
-  ];
-
-  for(const re of patterns){
-    const m=raw.match(re);
-    if(!m) continue;
-    const value=parseNumber(m[1]);
-    if(Number.isFinite(value) && value>0){
+  for (const line of lines) {
+    if (!/^(?:Sales|Net sales|Revenue|Revenues)\b/i.test(line)) continue;
+    const value = firstFinancialValueAfterLabel(
+      line,
+      /^(?:Sales|Net sales|Revenue|Revenues)\b/i
+    );
+    if (value != null && value > 0) {
       return {
-        value:Math.abs(value),
-        source:"SEC filing — current-quarter sales/revenue row"
+        value: Math.abs(value),
+        source: "SEC Statement of Operations — current-quarter sales/revenue"
       };
     }
   }
 
   return null;
 }
+
 function findLabeledFinancialValue(text, labelRegex) {
   const raw = String(text || "");
   // Preserve all regex flags (especially m) so row labels anchored with ^
