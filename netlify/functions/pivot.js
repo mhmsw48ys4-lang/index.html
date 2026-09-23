@@ -6,14 +6,9 @@ exports.handler = async (event) => {
     "Content-Type": "application/json; charset=utf-8"
   };
 
-  if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 204, headers, body: "" };
-  }
+  if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers, body: "" };
 
   try {
-    // نستخدم Yahoo Screener فقط لتكوين قائمة مرشحين:
-    // أسهم أمريكية، سعر 1-10 دولار، وسيولة يومية معقولة.
-    // شروط الارتكاز الدقيقة تُفحص لاحقاً في الموقع بنفس دوال البحث اليدوي.
     const body = {
       query: {
         operator: "AND",
@@ -22,38 +17,63 @@ exports.handler = async (event) => {
           { operator: "GTE", operands: ["intradayprice", 1] },
           { operator: "LTE", operands: ["intradayprice", 10] },
           { operator: "GT", operands: ["avgdailyvol3m", 200000] },
-          {
-            operator: "OR",
-            operands: [
-              { operator: "EQ", operands: ["exchange", "NMS"] },
-              { operator: "EQ", operands: ["exchange", "NYQ"] }
-            ]
-          }
+          { operator: "IS-IN", operands: ["exchange", ["NMS", "NYQ", "ASE", "BTS"]] }
         ]
       },
       sortField: "dayvolume",
       sortType: "DESC",
       quoteType: "EQUITY",
       offset: 0,
-      size: 100
+      size: 250,
+      userId: "",
+      userIdType: "guid"
     };
 
-    const response = await fetch(
-      "https://query2.finance.yahoo.com/v1/finance/screener" +
-      "?formatted=false&lang=en-US&region=US&corsDomain=finance.yahoo.com",
+    // Yahoo's custom screener endpoint can require a crumb/cookie pair.
+    // Get them first, then submit the screener request server-side.
+    const crumbResponse = await fetch(
+      "https://query1.finance.yahoo.com/v1/test/getcrumb",
       {
-        method: "POST",
         headers: {
           "User-Agent": "Mozilla/5.0",
-          "Accept": "application/json,text/plain,*/*",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body)
+          "Accept": "text/plain,*/*"
+        }
       }
     );
 
+    if (!crumbResponse.ok) {
+      throw new Error("Yahoo crumb HTTP " + crumbResponse.status);
+    }
+
+    const crumb = (await crumbResponse.text()).trim();
+    const setCookie = crumbResponse.headers.get("set-cookie") || "";
+    const cookie = setCookie
+      .split(",")
+      .map(x => x.split(";")[0].trim())
+      .filter(Boolean)
+      .join("; ");
+
+    if (!crumb) throw new Error("Yahoo لم يرجع مفتاح الجلسة");
+
+    const url =
+      "https://query1.finance.yahoo.com/v1/finance/screener" +
+      "?crumb=" + encodeURIComponent(crumb) +
+      "&formatted=false&lang=en-US&region=US&corsDomain=finance.yahoo.com";
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json,text/plain,*/*",
+        "Content-Type": "application/json",
+        ...(cookie ? { "Cookie": cookie } : {})
+      },
+      body: JSON.stringify(body)
+    });
+
     if (!response.ok) {
-      throw new Error("Yahoo Screener HTTP " + response.status);
+      const detail = await response.text();
+      throw new Error("Yahoo Screener HTTP " + response.status + " — " + detail.slice(0,180));
     }
 
     const json = await response.json();
@@ -66,10 +86,7 @@ exports.handler = async (event) => {
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({
-        symbols: [...new Set(symbols)],
-        count: symbols.length
-      })
+      body: JSON.stringify({ symbols: [...new Set(symbols)], count: symbols.length })
     };
   } catch (error) {
     return {
