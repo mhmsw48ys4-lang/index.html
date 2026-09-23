@@ -15,33 +15,44 @@ exports.handler = async (event) => {
     const exchanges = ["NASDAQ", "NYSE", "AMEX"];
 
     async function getExchange(exchange) {
-      const url =
-        "https://api.nasdaq.com/api/screener/stocks" +
-        "?tableonly=true&limit=25&offset=0&exchange=" +
-        encodeURIComponent(exchange) + "&download=true";
+      const limit = 5000;
+      const allRows = [];
 
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36",
-          "Accept": "application/json,text/plain,*/*",
-          "Accept-Language": "en-US,en;q=0.9",
-          "Origin": "https://www.nasdaq.com",
-          "Referer": "https://www.nasdaq.com/market-activity/stocks/screener"
+      for (let offset = 0; offset < 20000; offset += limit) {
+        const url =
+          "https://api.nasdaq.com/api/screener/stocks" +
+          "?tableonly=true&limit=" + limit +
+          "&offset=" + offset +
+          "&exchange=" + encodeURIComponent(exchange) +
+          "&download=true";
+
+        const response = await fetch(url, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36",
+            "Accept": "application/json,text/plain,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://www.nasdaq.com",
+            "Referer": "https://www.nasdaq.com/market-activity/stocks/screener"
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error("Nasdaq " + exchange + " HTTP " + response.status);
         }
-      });
 
-      if (!response.ok) {
-        throw new Error("Nasdaq " + exchange + " HTTP " + response.status);
+        const json = await response.json();
+        const rows = json?.data?.rows;
+
+        if (!Array.isArray(rows)) {
+          throw new Error("Nasdaq " + exchange + " returned no rows");
+        }
+
+        allRows.push(...rows);
+
+        if (rows.length < limit) break;
       }
 
-      const json = await response.json();
-      const rows = json?.data?.rows;
-
-      if (!Array.isArray(rows)) {
-        throw new Error("Nasdaq " + exchange + " returned no rows");
-      }
-
-      return rows;
+      return allRows;
     }
 
     const lists = await Promise.all(exchanges.map(getExchange));
