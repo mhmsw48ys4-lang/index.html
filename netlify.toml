@@ -1,0 +1,7 @@
+[build]
+  command = "echo Build complete"
+  publish = "."
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "zisi"
