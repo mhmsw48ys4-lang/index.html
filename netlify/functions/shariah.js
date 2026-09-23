@@ -283,7 +283,7 @@ async function findCurrentSharesOutstanding(text, usgaap, dei, filing, recent, c
 
     const post = extractShareAmount(
       plain,
-      /Class A[^.\n]{0,180}?approximately\s+([0-9.]+)\s+million[^.\n]{0,120}?Class B[^.\n]{0,100}?approximately\s+([0-9,]+)\s+(?:shares?|ordinary shares?)/i
+      /Class A[^.\n]{0,180}?approximately\s+([0-9.]+)\s+million[^.\n]{0,120}?Class B[^.\n]{0,100}?approximately\s+([0-9.]+)\s+(million|thousand|shares?|ordinary shares?)/i
     );
 
     if (post) {
@@ -305,7 +305,10 @@ function extractShareAmount(text, regex) {
   const m = String(text || "").match(regex);
   if (!m) return null;
   const a = Number(m[1]) * 1000000;
-  const b = parseNumber(m[2]);
+  const bRaw = Number(m[2]);
+  const unit = String(m[3] || "").toLowerCase();
+  const multiplier = unit.includes("million") ? 1000000 : unit.includes("thousand") ? 1000 : 1;
+  const b = bRaw * multiplier;
   return Number.isFinite(a) && Number.isFinite(b) ? {a,b} : null;
 }
 
