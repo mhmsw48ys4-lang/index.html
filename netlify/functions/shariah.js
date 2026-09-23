@@ -659,14 +659,14 @@ function findTotalIncome(text, usgaap, filing) {
   // the same flattened line. Reading the first value after each explicit
   // current-quarter row label avoids accidentally using a prior-period value.
   const statementPositiveLabels = [
-    /^(?:sales|revenue|revenues|net sales)/i,
-    /^interest income(?:,?\s+net)?/i,
-    /^dividend income/i,
-    /^change in fair value of conversion option liability/i,
-    /^change in fair value of warrants? liabilities?/i,
-    /^change in fair value of .* liability/i,
-    /^gain on/i,
-    /^gain from/i
+    /(?:sales|revenue|revenues|net sales)/i,
+    /interest income(?:,?\s+net)?/i,
+    /dividend income/i,
+    /change in fair value of conversion option liability/i,
+    /change in fair value of warrants? liabilities?/i,
+    /change in fair value of .* liability/i,
+    /gain on/i,
+    /gain from/i
   ];
 
   if (ops && /Other income \(expense\)/i.test(ops) && /Total other income \(expense\),? net/i.test(ops)) {
