@@ -561,6 +561,7 @@ function findTotalIncome(text, usgaap, filing) {
   const interestRegex = /^(?:interest income|interest revenue|income from interest)\b/i;
   let revenue = null;
   let interestIncome = null;
+  let totalOtherIncome = null;
   const otherPositive = [];
 
   for (let i = 0; i < lines.length; i++) {
@@ -579,6 +580,20 @@ function findTotalIncome(text, usgaap, filing) {
       continue;
     }
 
+    // Prefer the statement's own total-other-income row when available.
+    // This captures gains such as warrant remeasurement without accidentally
+    // summing the same component twice.
+    if (totalOtherIncome == null && /^total other income(?: \(expense\))?/i.test(line)) {
+      const v = firstFinancialValueAfterLabel(
+        line,
+        /^total other income(?: \(expense\))?/i
+      );
+      if (v != null) {
+        totalOtherIncome = v;
+        continue;
+      }
+    }
+
     if (/(?:^|\s)(?:other income|gain on|gain from|income from)\b/i.test(line) &&
         !/expense|loss|net loss/i.test(line)) {
       const v = firstFinancialValueAfterLabel(line, /^(?:other income|gain on|gain from|income from)/i);
@@ -586,7 +601,11 @@ function findTotalIncome(text, usgaap, filing) {
     }
   }
 
-  const components = [revenue, interestIncome, ...otherPositive].filter(v => v != null);
+  const otherIncome = totalOtherIncome != null
+    ? Math.max(0, totalOtherIncome)
+    : otherPositive.reduce((a, x) => a + x, 0);
+
+  const components = [revenue, interestIncome, otherIncome].filter(v => v != null);
   const total = components.reduce((sum, v) => sum + Math.abs(v), 0);
 
   if (total > 0) {
