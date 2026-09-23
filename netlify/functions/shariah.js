@@ -78,7 +78,7 @@ exports.handler = async (event) => {
     const dei = factsJson?.facts?.dei || {};
 
     const currentPrice = await getCurrentPrice(symbol);
-    const shares = findSharesOutstanding(filingText, usgaap, dei, filing);
+    const shares = await findCurrentSharesOutstanding(filingText, usgaap, dei, filing, recent, cik, secHeaders);
 
     const marketCap = currentPrice != null && shares != null
       ? currentPrice * shares
@@ -261,28 +261,80 @@ function chooseLatestFinancialFiling(recent) {
   return null;
 }
 
-function findSharesOutstanding(text, usgaap, dei, filing) {
-  const patterns = [
-    /(?:shares?|ordinary shares?|common shares?)[^\n]{0,100}(?:outstanding|issued and outstanding)[^\n]{0,120}?([0-9][0-9,]*(?:\.\d+)?)/i,
-    /([0-9][0-9,]*(?:\.\d+)?)\s+(?:shares?|ordinary shares?|common shares?)\s+(?:issued and )?outstanding/i
-  ];
+async function findCurrentSharesOutstanding(text, usgaap, dei, filing, recent, cik, secHeaders) {
+  const direct = findSharesOutstanding(text, usgaap, dei, filing);
+  let best = direct || null;
+  const forms = recent?.form || [];
+  const accessions = recent?.accessionNumber || [];
 
-  for (const re of patterns) {
-    const m = text.match(re);
-    if (m) {
-      const n = parseNumber(m[1]);
-      if (n > 0) return n;
+  for (let i = 0; i < Math.min(forms.length, 40); i++) {
+    if (forms[i] !== "6-K") continue;
+    const acc = String(accessions[i] || "");
+    if (!acc) continue;
+
+    const url =
+      "https://www.sec.gov/Archives/edgar/data/" +
+      String(Number(cik)) + "/" +
+      acc.replace(/-/g, "") + "/" + acc + ".txt";
+
+    let plain;
+    try { plain = cleanText(await fetchText(url, secHeaders)); }
+    catch (_) { continue; }
+
+    const post = extractShareAmount(
+      plain,
+      /Class A[^.\n]{0,180}?approximately\s+([0-9.]+)\s+million[^.\n]{0,120}?Class B[^.\n]{0,100}?approximately\s+([0-9,]+)\s+(?:shares?|ordinary shares?)/i
+    );
+
+    if (post) {
+      const total = post.a + post.b;
+      if (total > 1000) { best = total; break; }
+    }
+
+    const exact = extractExactClassShares(plain);
+    if (exact && exact > 1000 && /reverse stock split|reverse split|share consolidation|post[- ]reverse[- ]split/i.test(plain)) {
+      best = exact;
+      break;
     }
   }
 
+  return best;
+}
+
+function extractShareAmount(text, regex) {
+  const m = String(text || "").match(regex);
+  if (!m) return null;
+  const a = Number(m[1]) * 1000000;
+  const b = parseNumber(m[2]);
+  return Number.isFinite(a) && Number.isFinite(b) ? {a,b} : null;
+}
+
+function extractExactClassShares(text) {
+  const a = String(text || "").match(/Class A[^.\n]{0,180}?([0-9][0-9,]+)\s+(?:ordinary )?shares?[^.\n]{0,80}?issued and outstanding/i);
+  const b = String(text || "").match(/Class B[^.\n]{0,180}?([0-9][0-9,]+)\s+(?:ordinary )?shares?[^.\n]{0,80}?issued and outstanding/i);
+  if (!a || !b) return null;
+  const av = parseNumber(a[1]), bv = parseNumber(b[1]);
+  return av > 1000 && bv >= 0 ? av + bv : null;
+}
+
+function findSharesOutstanding(text, usgaap, dei, filing) {
   const fact = latestFactFromFacts(
     ["EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"],
-    dei,
-    usgaap,
-    filing
+    dei, usgaap, filing
   );
+  if (fact?.value > 1000) return fact.value;
 
-  return fact?.value || null;
+  const patterns = [
+    /([0-9][0-9,]+)\s+Class\s+A[^\n]{0,100}?and\s+([0-9][0-9,]+)\s+Class\s+B[^\n]{0,100}?issued and outstanding/i,
+    /as of [A-Z][a-z]+\s+\d{1,2},\s+20\d{2}[^\n]{0,120}?([0-9][0-9,]+)\s+Class\s+A[^\n]{0,100}?([0-9][0-9,]+)\s+Class\s+B/i
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (!m) continue;
+    const a = parseNumber(m[1]), b = parseNumber(m[2]);
+    if (a > 1000 && b >= 0) return a + b;
+  }
+  return null;
 }
 
 function findInterestBearingDebt(text, usgaap, filing) {
