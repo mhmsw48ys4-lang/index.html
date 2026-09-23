@@ -466,7 +466,7 @@ function findInterestBearingDebt(text, usgaap, filing) {
     const explicitlyInterestBearing =
       /interest[- ]bearing|interest rate|interest expense|annual rate|coupon/i.test(nearby);
 
-    if (/^(?:debt|notes payable)\\b/i.test(line) && !explicitlyInterestBearing) continue;
+    if (/^(?:debt|notes payable)\b/i.test(line) && !explicitlyInterestBearing) continue;
 
     const nums = numbersFromLine(line);
     if (nums.length) {
@@ -528,7 +528,7 @@ function findInterestTakingDeposits(text, usgaap, filing) {
 
 function findProhibitedIncome(text, usgaap, filing) {
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const regex = /(?:^|\\s)(?:interest income|interest revenue|income from interest)(?:\\s|,|$)/i;
+  const regex = /(?:^|\s)(?:interest income|interest revenue|income from interest)(?:\s|,|$)/i;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -568,7 +568,7 @@ function findTotalIncome(text, usgaap, filing) {
   // a real zero and must not be discarded, otherwise the previous-year column
   // can accidentally become the "current" revenue.
   const revenueRegex = /^(?:revenue|revenues|revenue,? net|total revenue|net sales|sales revenue|total income|operating revenue)\b/i;
-  const interestRegex = /^(?:interest income|interest revenue|income from interest)(?:\\s|,|$)/i;
+  const interestRegex = /^(?:interest income|interest revenue|income from interest)(?:\s|,|$)/i;
   let revenue = null;
   let interestIncome = null;
   let totalOtherIncome = null;
