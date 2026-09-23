@@ -553,6 +553,17 @@ function findInterestTakingDeposits(text, usgaap, filing) {
   return null;
 }
 
+function getPrimaryOperationsStatementSection(text) {
+  const raw = String(text || "");
+  const marker = /(?:condensed (?:consolidated )?)?statements of operations(?: and comprehensive (?:loss|income))?/gi;
+  const m = marker.exec(raw);
+  if (!m) return null;
+
+  const tail = raw.slice(m.index);
+  const stop = tail.search(/(?:condensed )?(?:statements of cash flows|statements of comprehensive (?:loss|income)|notes to (?:condensed )?financial statements)/i);
+  return stop > 0 ? tail.slice(0, stop) : tail.slice(0, 120000);
+}
+
 function getOperationsSection(text) {
   const raw = String(text || "");
   const marker = /(?:condensed consolidated )?(?:statements of operations|statements of income|statements of earnings)/gi;
@@ -592,7 +603,7 @@ function findProhibitedIncome(text, usgaap, filing) {
   // interest-income columns in the flattened HTML. If the filing has an
   // explicit "Interest income, net" + "Total other income, net" statement,
   // use the statement's current-quarter value before broader MD&A matching.
-  const ops = getOperationsSection(raw);
+  const ops = getPrimaryOperationsStatementSection(raw) || getOperationsSection(raw);
   if (ops && /Interest income, net/i.test(ops) && /Total other income, net/i.test(ops)) {
     const v = findLabeledFinancialValue(ops, /Interest income, net/i);
     if (v != null) {
@@ -643,7 +654,9 @@ function findProhibitedIncome(text, usgaap, filing) {
   return null;
 }
 function extractCurrentQuarterGrossPositiveIncome(text) {
-  const ops = getOperationsSection(text);
+  // Use the first financial Statement of Operations, not the last MD&A
+  // reconciliation. The first statement has the current-quarter column first.
+  const ops = getPrimaryOperationsStatementSection(text) || getOperationsSection(text);
   if (!ops) return null;
 
   // Read the first/current-quarter value from each income row in the
