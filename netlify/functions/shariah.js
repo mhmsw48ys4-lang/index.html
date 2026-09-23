@@ -643,6 +643,52 @@ function extractStatementAmount(text, labelPattern) {
 
 
 function extractSecCurrentQuarterIncomeComponents(text) {
+  // First parse the cleaned SEC table globally by exact first-cell labels.
+  // This is independent of statement-title formatting and works even when
+  // SEC HTML inserts empty cells between the label, "$", and amount.
+  {
+    const lines = raw.split(/\r?\n/).map(x => String(x || "").trim()).filter(Boolean);
+    const wanted = [
+      { key: "sales", re: /^Sales\s*\|/i },
+      { key: "interest", re: /^Interest income(?:,\s*net)?\s*\|/i },
+      { key: "dividend", re: /^Dividend income\s*\|/i },
+      { key: "conversion", re: /^Change in fair value of conversion option liability\s*\|/i },
+      { key: "warrants", re: /^Change in fair value of warrants liabilities?\s*\|/i }
+    ];
+    const components = [];
+    const seen = new Set();
+
+    for (const line of lines) {
+      const cells = line.split("|").map(x => x.trim()).filter(Boolean);
+      if (!cells.length) continue;
+      const label = cells[0].replace(/^FEMASYS INC\.\s+/i, "").trim();
+
+      for (const item of wanted) {
+        if (!item.re.test(label + " |")) continue;
+        for (const cell of cells.slice(1)) {
+          const token = cell.match(/^\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?$/);
+          if (!token) continue;
+          const value = Math.abs(parseNumber(token[0]));
+          if (Number.isFinite(value) && value > 0 && !seen.has(value)) {
+            seen.add(value);
+            components.push({ key: item.key, value });
+          }
+          break;
+        }
+        break;
+      }
+    }
+
+    const interest = components.find(x => x.key === "interest")?.value ?? null;
+    if (components.some(x => x.key === "sales") && interest != null) {
+      return {
+        total: components.reduce((sum, x) => sum + x.value, 0),
+        interest,
+        components
+      };
+    }
+  }
+
   const raw = String(text || "");
 
   // The SEC cleaner preserves table cells with "|" and rows with newlines.
