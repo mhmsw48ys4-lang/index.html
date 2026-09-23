@@ -269,9 +269,9 @@ function getDeposits(facts, rows) {
 }
 
 function getInterest(facts, rows) {
-  // Only accept a standalone interest-income disclosure.
-  // Do NOT treat "interest income and unrealized gains" or
-  // "financing income, net" as pure interest income.
+  // Only accept a standalone interest-income line from the selected filing.
+  // Composite lines such as "interest income and unrealized gains" and
+  // "financing income, net" are deliberately rejected.
   for (const r of rows) {
     if (/^interest\s+income(?:,\s*net)?$/i.test(r.label) && r.values.length) {
       return {
@@ -282,26 +282,14 @@ function getInterest(facts, rows) {
     }
   }
 
-  const x = flowFacts(facts, [
-    "InterestIncome",
-    "InterestIncomeNonoperating",
-    "InvestmentIncomeInterest"
-  ]);
-
-  return x || null;
+  // Missing standalone disclosure = insufficient data.
+  return null;
 }
 
 function getSales(facts, rows) {
-  const x = flowFacts(facts, [
-    "RevenueFromContractWithCustomerExcludingAssessedTax",
-    "RevenueFromContractWithCustomerIncludingAssessedTax",
-    "SalesRevenueNet",
-    "SalesRevenueGoodsNet",
-    "Revenue"
-  ]);
-
-  if (x) return x;
-
+  // Prefer the selected filing's explicit revenue row. This prevents
+  // generic XBRL tags such as "Revenue" from selecting an unrelated
+  // context/value (for example a balance-sheet amount).
   for (const r of rows) {
     if (/^(sales|net sales|revenue|revenues|net revenue)$/i.test(r.label) && r.values.length) {
       return {
@@ -312,7 +300,13 @@ function getSales(facts, rows) {
     }
   }
 
-  return null;
+  // Only use exact XBRL revenue concepts as a fallback.
+  return flowFacts(facts, [
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "RevenueFromContractWithCustomerIncludingAssessedTax",
+    "SalesRevenueNet",
+    "SalesRevenueGoodsNet"
+  ]) || null;
 }
 
 function instantFacts(facts, names) {
