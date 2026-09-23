@@ -597,6 +597,39 @@ function findProhibitedIncome(text, usgaap, filing) {
 }
 
 function findTotalIncome(text, usgaap, filing) {
+  // Prefer the filing's explicit current-period MD&A reconciliation when it
+  // lists the positive income components. This avoids mixing statement columns
+  // when SEC HTML tables are flattened.
+  const mdna = String(text || "").match(
+    /Other income \(expenses\), net, for the three months ended [^\n]{0,180}?is attributable to([\s\S]{0,1200}?)(?:Other income \(expense\), net|Discussion of Operating|Liquidity and Capital Resources)/i
+  );
+  if (mdna) {
+    const part = mdna[1];
+    const positiveLabels = [
+      /interest income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
+      /dividend income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
+      /change in fair value of warrant liability(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
+      /change in fair value of derivative liability(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
+      /gain on legal settlement(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
+      /income from[^$\d]{0,30}\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i
+    ];
+    const positive = [];
+    for (const re of positiveLabels) {
+      const m = part.match(re);
+      if (m) {
+        const v = parseNumber(m[1]);
+        if (Number.isFinite(v) && v > 0) positive.push(v);
+      }
+    }
+    const explicitTotal = positive.reduce((s, v) => s + v, 0);
+    if (explicitTotal > 0) {
+      return {
+        value: explicitTotal,
+        source: "SEC MD&A — explicit positive income components for current quarter"
+      };
+    }
+  }
+
   const section = getOperationsSection(text);
   const source = section || text;
   const lines = source.split(/\r?\n/).map(normalizeLine).filter(Boolean);
