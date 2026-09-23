@@ -55,7 +55,7 @@ exports.handler = async (event) => {
 
         if (
           symbol &&
-          /^[A-Z0-9.\\-]+$/.test(symbol) &&
+          /^[A-Z0-9.-]+$/.test(symbol) &&
           Number.isFinite(price) &&
           price >= 1 &&
           price <= 7 &&
