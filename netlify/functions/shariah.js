@@ -556,12 +556,27 @@ function findInterestTakingDeposits(text, usgaap, filing) {
 function getPrimaryOperationsStatementSection(text) {
   const raw = String(text || "");
   const marker = /(?:condensed (?:consolidated )?)?statements of operations(?: and comprehensive (?:loss|income))?/gi;
-  const m = marker.exec(raw);
-  if (!m) return null;
+  const candidates = [];
+  let m;
 
-  const tail = raw.slice(m.index);
-  const stop = tail.search(/(?:condensed )?(?:statements of cash flows|statements of comprehensive (?:loss|income)|notes to (?:condensed )?financial statements)/i);
-  return stop > 0 ? tail.slice(0, stop) : tail.slice(0, 120000);
+  while ((m = marker.exec(raw))) {
+    const tail = raw.slice(m.index, m.index + 120000);
+    const stop = tail.search(/(?:condensed )?(?:statements of cash flows|statements of comprehensive (?:loss|income)|notes to (?:condensed )?financial statements)/i);
+    const section = stop > 0 ? tail.slice(0, stop) : tail;
+
+    // Ignore table-of-contents / navigation hits. The real statement contains
+    // financial row labels and multiple numbers.
+    const hasRows =
+      /\b(?:sales|revenue|interest income|dividend income|operating expenses|net loss)\b/i.test(section);
+    const numberCount = (section.match(/\$?\(?[0-9][0-9,]*(?:\.\d+)?\)?/g) || []).length;
+
+    if (hasRows && numberCount >= 8) {
+      candidates.push(section);
+    }
+  }
+
+  // The first qualifying statement is the primary financial statement.
+  return candidates.length ? candidates[0] : null;
 }
 
 function getOperationsSection(text) {
