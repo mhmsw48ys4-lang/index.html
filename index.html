@@ -415,7 +415,7 @@ placeholder="اكتب رمز السهم مثل NTCL">
 </div>
 
 <div class="scannerDesc">
-المسح التلقائي يبحث عن الأسهم بين $1 و $7 التي هبطت ثم ثبتت عند قاعها 3–4 أيام. بعدها تفرزها يدوياً بشروطك الأصلية.
+المسح التلقائي يبحث عن الأسهم بين $1 و $7 التي هبطت ثم ثبتت عند قاعها 3 أيام أو أكثر. بعدها تفرزها يدوياً بشروطك الأصلية.
 </div>
 
 <button
@@ -1856,6 +1856,49 @@ async function fetchSplitCalendar(){
    ولا يلمس شروط البحث اليدوي
 ========================= */
 
+/* البحث التلقائي عن أي قاع محلي ثبت 3 أيام أو أكثر.
+   مستقل عن findPivot/stability المستخدمة في البحث اليدوي،
+   حتى لا يمنعنا قاع أحدث لم يكتمل ثباته من اكتشاف قاع أقدم مكتمل. */
+function findAutoBase(rows){
+  if(!rows || rows.length<5) return null;
+
+  const start=Math.max(1,rows.length-60);
+
+  for(let i=rows.length-2;i>=start;i--){
+    const prev=rows[i-1];
+    const cur=rows[i];
+    const next=rows[i+1];
+
+    if(!(cur.low<=prev.low && cur.low<=next.low)) continue;
+
+    let broken=false;
+
+    for(let j=i+1;j<rows.length;j++){
+      if(rows[j].low<cur.low){
+        broken=true;
+        break;
+      }
+    }
+
+    if(broken) continue;
+
+    const days=rows.length-1-i;
+
+    if(days>=3){
+      return {
+        pivot:{
+          price:cur.low,
+          date:cur.date,
+          index:i
+        },
+        count:days
+      };
+    }
+  }
+
+  return null;
+}
+
 async function autoScanSplits(){
   const status=document.getElementById("scanStatus");
   const results=document.getElementById("scanResults");
@@ -1879,61 +1922,76 @@ async function autoScanSplits(){
     }
 
     const found=[];
-    const errors=[];
     const batchSize=10;
 
     for(let i=0;i<symbols.length;i+=batchSize){
       const batch=symbols.slice(i,i+batchSize);
-      status.textContent="جاري فحص الثبات عند القاع "+Math.min(i+batch.length,symbols.length)+" من "+symbols.length+"...";
+
+      status.textContent=
+        "جاري فحص القاع والثبات "+
+        Math.min(i+batch.length,symbols.length)+
+        " من "+symbols.length+"...";
 
       const settled=await Promise.allSettled(batch.map(async symbol=>{
         const result=await getStock(symbol);
-        return analyze(result);
+        const rows=makeRows(result.data);
+        const base=findAutoBase(rows);
+
+        if(!base) return null;
+
+        const a=analyze(result);
+        const price=Number(a?.latest?.close);
+
+        if(
+          !Number.isFinite(price) ||
+          price<1 ||
+          price>7
+        ) return null;
+
+        /* نستخدم نتيجة القاع التلقائي فقط هنا.
+           البحث اليدوي يبقى على شروطه الأصلية دون تغيير. */
+        a.pivot=base.pivot;
+        a.stability={
+          count:base.count,
+          complete:base.count>=3,
+          pivot:base.pivot
+        };
+
+        return a;
       }));
 
       for(const r of settled){
-        if(r.status!=="fulfilled") continue;
-
-        const a=r.value;
-        const price=Number(a?.latest?.close);
-        const stableDays=Number(a?.stability?.count||0);
-
-        // المسح التلقائي هنا مخصص لاكتشاف:
-        // هبوط -> قاع محلي -> عدم كسر القاع لمدة 3 أو 4 أيام.
-        // لا نفرض RSI/MACD/EMA/RVOL هنا؛ المستخدم يفرزها يدوياً بعد ذلك.
-        if(
-          a &&
-          a.pivot &&
-          a.stability &&
-          stableDays>=3 &&
-          Number.isFinite(price) &&
-          price>=1 &&
-          price<=7
-        ){
-          found.push(a);
+        if(r.status==="fulfilled" && r.value){
+          found.push(r.value);
         }
       }
     }
 
     found.sort((a,b)=>{
-      const sd=(b.stability?.count||0)-(a.stability?.count||0);
-      if(sd!==0) return sd;
-      return Number(a.pivot?.price||0)-Number(b.pivot?.price||0);
+      const da=new Date(b.pivot.date)-new Date(a.pivot.date);
+      if(da!==0) return da;
+      return Number(b.stability?.count||0)-Number(a.stability?.count||0);
     });
 
     if(!found.length){
-      status.textContent="انتهى المسح — لم يظهر سهم ثبت عند القاع 3 أو 4 أيام ضمن $1–$7.";
+      status.textContent="انتهى المسح — لم يظهر سهم ثبت عند القاع 3 أيام أو أكثر ضمن $1–$7.";
       results.innerHTML='<div class="empty">لم يظهر سهم يحقق: هبوط + قاع + ثبات 3 أيام أو أكثر.</div>';
       return;
     }
 
-    status.innerHTML="تم المسح ✓ — وجدنا "+found.length+" سهم عنده قاع ثابت 3 أيام أو أكثر.";
+    status.innerHTML=
+      "تم المسح ✓ — وجدنا "+
+      found.length+
+      " سهم عنده قاع ثابت 3 أيام أو أكثر.";
+
     results.innerHTML=found.map(renderPivotAutoCard).join("");
   }catch(error){
-    status.innerHTML='<div class="error">تعذر تشغيل مسح الارتكاز: '+escapeHtml(error.message)+'</div>';
+    status.innerHTML=
+      '<div class="error">تعذر تشغيل مسح الارتكاز: '+
+      escapeHtml(error.message)+
+      '</div>';
   }
 }
-
 function renderPivotAutoCard(a){
   const symbol=escapeHtml(a.symbol);
   const days=Number(a.stability?.count||0);
