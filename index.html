@@ -1860,31 +1860,32 @@ async function fetchSplitCalendar(){
    مستقل عن findPivot/stability المستخدمة في البحث اليدوي،
    حتى لا يمنعنا قاع أحدث لم يكتمل ثباته من اكتشاف قاع أقدم مكتمل. */
 function findAutoBase(rows){
-  if(!rows || rows.length<5) return null;
-
-  const start=Math.max(0,rows.length-60);
+  if(!rows || rows.length<4) return null;
 
   /*
-    المسح التلقائي لا يشترط أن يكون هناك هبوط قبل القاع.
-    المطلوب فقط: سعر صنع قاعاً ثم بقيت أقل الأسعار فوق هذا القاع
-    لمدة 3 جلسات متتالية أو أكثر.
-    
-    نبحث من الأحدث للأقدم حتى نأخذ أحدث قاعدة مكتملة.
+    مهم: لا نحسب الثبات من "اليوم" فقط.
+    نبحث تاريخياً في آخر 120 جلسة عن أي قاع بقيت
+    أدنى الأسعار فوقه 3 جلسات تداول كاملة على الأقل.
+    يعني: يوم القاع + 3 أيام بعده = قاعدة مكتملة.
+    لا يشترط هبوط قبل القاع، ولا يشترط أن يبقى القاع سليماً حتى اليوم.
   */
+  const start=Math.max(0,rows.length-120);
+
   for(let i=rows.length-4;i>=start;i--){
-    const cur=rows[i];
+    const baseLow=rows[i].low;
+    if(!Number.isFinite(baseLow)) continue;
+
     let days=0;
 
     for(let j=i+1;j<rows.length;j++){
-      if(rows[j].low < cur.low) break;
-
+      if(rows[j].low < baseLow) break;
       days++;
 
       if(days>=3){
         return {
           pivot:{
-            price:cur.low,
-            date:cur.date,
+            price:baseLow,
+            date:rows[i].date,
             index:i
           },
           count:days
@@ -1900,7 +1901,7 @@ async function autoScanSplits(){
   const status=document.getElementById("scanStatus");
   const results=document.getElementById("scanResults");
   results.innerHTML="";
-  status.textContent="جاري مسح الأسهم $1–$7 والبحث عن قاع بقي السعر فوقه 3 أيام أو أكثر...";
+  status.textContent="جاري مسح الأسهم $1–$7 والبحث عن قاع بقي السعر فوقه 3 جلسات تداول كاملة أو أكثر...";
 
   try{
     const response=await fetch("/.netlify/functions/pivot",{cache:"no-store"});
@@ -2451,4 +2452,4 @@ addStock();
 </body>
 </html>
 
-<!-- Netlify redeploy trigger: 2026-09-23-base-only -->
+<!-- Netlify redeploy trigger: 2026-09-23-base-only-v2 -->
