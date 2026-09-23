@@ -453,16 +453,26 @@ function findInterestBearingDebt(text, usgaap, filing) {
   // total liabilities or generic XBRL debt facts that can represent a
   // different accounting concept.
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const rowRegex = /^(?:convertible debt|convertible note|long-term bank loan|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?)\b/i;
+  const rowRegex = /^(?:convertible debt|convertible note|long-term bank loan|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?|debt|notes payable)\\b/i;
   const matched = [];
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (!rowRegex.test(line)) continue;
+
+    // Generic debt labels are counted only when the filing also identifies
+    // interest/rate information nearby; this avoids counting other liabilities.
+    const nearby = lines.slice(i, Math.min(lines.length, i + 4)).join(" ");
+    const explicitlyInterestBearing =
+      /interest[- ]bearing|interest rate|interest expense|annual rate|coupon/i.test(nearby);
+
+    if (/^(?:debt|notes payable)\\b/i.test(line) && !explicitlyInterestBearing) continue;
+
     const nums = numbersFromLine(line);
     if (nums.length) {
       matched.push({
         label: line.slice(0, 180),
-        value: Math.abs(nums[0]) * inferLineScale(lines, lines.indexOf(line))
+        value: Math.abs(nums[0]) * inferLineScale(lines, i)
       });
     }
   }
@@ -518,7 +528,7 @@ function findInterestTakingDeposits(text, usgaap, filing) {
 
 function findProhibitedIncome(text, usgaap, filing) {
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const regex = /(?:^|\s)(?:interest income|interest revenue|income from interest)(?:\s|$)/i;
+  const regex = /(?:^|\\s)(?:interest income|interest revenue|income from interest)(?:\\s|,|$)/i;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -558,7 +568,7 @@ function findTotalIncome(text, usgaap, filing) {
   // a real zero and must not be discarded, otherwise the previous-year column
   // can accidentally become the "current" revenue.
   const revenueRegex = /^(?:revenue|revenues|revenue,? net|total revenue|net sales|sales revenue|total income|operating revenue)\b/i;
-  const interestRegex = /^(?:interest income|interest revenue|income from interest)\b/i;
+  const interestRegex = /^(?:interest income|interest revenue|income from interest)(?:\\s|,|$)/i;
   let revenue = null;
   let interestIncome = null;
   let totalOtherIncome = null;
@@ -783,6 +793,7 @@ function cleanText(html) {
     String(html || "")
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      // Keep SEC table rows separated so label/value extraction is stable.
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<\/tr>/gi, "\n")
       .replace(/<\/p>/gi, "\n")
