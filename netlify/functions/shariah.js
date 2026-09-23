@@ -1,146 +1,157 @@
-function response(statusCode, body, headers) {
-  return {
-    statusCode,
-    headers,
-    body: JSON.stringify(body)
-  };
-}
-
-const HEADERS = {
+const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Content-Type",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
   "Content-Type": "application/json; charset=utf-8"
 };
 
+const SEC_HEADERS = {
+  "User-Agent": "khald-pivot-scanner contact@example.com",
+  "Accept": "application/json,text/plain,*/*"
+};
+
 exports.handler = async function (event) {
   if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 204, headers: HEADERS, body: "" };
+    return { statusCode: 204, headers: CORS, body: "" };
   }
 
-  const symbol = String(event.queryStringParameters?.symbol || "").trim().toUpperCase();
-  if (!symbol) return response(400, { error: "اكتب رمز السهم" }, HEADERS);
+  const symbol = String(event.queryStringParameters?.symbol || "")
+    .trim()
+    .toUpperCase();
+
+  if (!/^[A-Z0-9.\-]{1,12}$/.test(symbol)) {
+    return json(400, { error: "رمز السهم غير صحيح" });
+  }
 
   try {
-    const secHeaders = {
-      "User-Agent": "khald-pivot-scanner contact@example.com",
-      "Accept": "text/html,application/json,text/plain,*/*"
-    };
+    // 1) Resolve ticker -> CIK.
+    const tickerMap = await getJson(
+      "https://www.sec.gov/files/company_tickers.json"
+    );
 
-    const tickers = await getJson("https://www.sec.gov/files/company_tickers.json", secHeaders);
-    const company = Object.values(tickers || {}).find(
+    const company = Object.values(tickerMap || {}).find(
       x => String(x.ticker || "").toUpperCase() === symbol
     );
 
     if (!company) {
-      return response(404, { error: "لم نجد الشركة في سجلات SEC" }, HEADERS);
+      return json(404, {
+        symbol,
+        status: "insufficient",
+        reason: "لم نجد رمز السهم في SEC EDGAR"
+      });
     }
 
     const cik = String(company.cik_str).padStart(10, "0");
-    const submissions = await getJson(
-      "https://data.sec.gov/submissions/CIK" + cik + ".json",
-      secHeaders
-    );
+
+    // 2) Get filing metadata and XBRL facts.
+    const [submissions, facts] = await Promise.all([
+      getJson("https://data.sec.gov/submissions/CIK" + cik + ".json"),
+      getJson("https://data.sec.gov/api/xbrl/companyfacts/CIK" + cik + ".json")
+    ]);
 
     const filing = latestFiling(submissions?.filings?.recent || {});
-    if (!filing) {
-      return response(200, {
-        symbol,
-        status: "insufficient",
-        reason: "لم نجد آخر إفصاح مالي مناسب في SEC",
-        source: "SEC EDGAR"
-      }, HEADERS);
-    }
-
-    const base =
-      "https://www.sec.gov/Archives/edgar/data/" +
-      String(Number(cik)) + "/" +
-      String(filing.accession).replace(/-/g, "") + "/";
-
-    const primaryUrl = filing.primaryDocument
-      ? base + filing.primaryDocument
-      : base + filing.accession + ".txt";
-
-    let filingHtml;
-    try {
-      filingHtml = await getText(primaryUrl, secHeaders);
-    } catch (_) {
-      filingHtml = await getText(
-        base + filing.accession + ".txt",
-        secHeaders
-      );
-    }
-
-    const rows = extractRows(filingHtml);
-    const text = htmlToText(filingHtml);
+    const activity = String(
+      submissions?.name || company?.title || ""
+    );
+    const sic = String(submissions?.sic || "");
+    const sicDescription = String(submissions?.sicDescription || "");
 
     const market = await getMarket(symbol);
     const price = market?.price ?? null;
+    const shares = market?.shares ?? extractSharesFromFacts(facts);
+    const marketCap =
+      market?.marketCap ??
+      (price > 0 && shares > 0 ? price * shares : null);
 
-    let shares = market?.shares ?? null;
-    if (!(shares > 0)) shares = extractShares(text);
-
-    let marketCap = market?.marketCap ?? null;
-    if (!(marketCap > 0) && price > 0 && shares > 0) {
-      marketCap = price * shares;
-    }
-
-    const sic = String(submissions.sic || "");
-    const sicDescription = String(submissions.sicDescription || "");
-    const companyName = String(submissions.name || company.name || "");
-
-    const blockedWords = [
+    // 3) Activity screen first.
+    const blocked = [
       "bank", "banking", "insurance", "casino", "gambling",
       "tobacco", "cigarette", "cannabis", "marijuana",
       "liquor", "distillery", "brewery", "beer", "wine",
       "pork", "swine", "adult entertainment"
     ];
 
-    const activityBlocked = blockedWords.some(
-      w => (companyName + " " + sicDescription).toLowerCase().includes(w)
-    );
-
-    if (activityBlocked) {
-      return response(200, {
+    const activityText = (activity + " " + sicDescription).toLowerCase();
+    if (blocked.some(word => activityText.includes(word))) {
+      return json(200, {
         symbol,
         status: "rejected_activity",
-        activity: companyName,
+        activity,
         sic,
         sicDescription,
         filing: publicFiling(filing),
         marketCap,
         currentPrice: price,
         sharesOutstanding: shares,
-        marketCapSource: market?.source || null
-      }, HEADERS);
+        source: "SEC EDGAR + Yahoo Finance"
+      });
     }
 
-    const debt = findDebt(rows, text);
-    const deposits = findDeposits(rows, text);
-    const interest = findRowValue(rows, /^interest income(?:,?\s+net)?$/i);
-    const sales = findRowValue(rows, /^(?:sales|net sales|revenue|revenues)$/i);
+    // 4) Read XBRL facts. No environment variables and no HTML-table guessing.
+    const debt = findFact(facts, [
+      "ConvertibleNotesPayable",
+      "ConvertibleDebt",
+      "LongTermDebtCurrent",
+      "LongTermDebtNoncurrent",
+      "LongTermDebt",
+      "ShortTermBorrowings",
+      "NotesPayable",
+      "DebtCurrent",
+      "DebtNoncurrent",
+      "Debt"
+    ], { balance: true });
 
-    const prohibitedIncome = interest != null
-      ? { value: Math.abs(interest), label: "Interest income", source: "SEC Statement of Operations — current quarter" }
-      : hasOperationsData(rows, text)
-        ? { value: 0, label: "No interest income disclosed", source: "SEC Statement of Operations — no interest income line disclosed" }
+    const deposits = findFact(facts, [
+      "InterestBearingDeposits",
+      "InterestBearingDepositsAtBanks",
+      "InterestBearingDepositsLiability"
+    ], { balance: true });
+
+    const interest = findFact(facts, [
+      "InterestIncomeExpenseNonoperatingNet",
+      "InterestIncomeNonoperating",
+      "InterestIncome",
+      "InterestAndOtherIncome",
+      "InvestmentIncomeInterest"
+    ], { flow: true, quarter: true });
+
+    const sales = findFact(facts, [
+      "RevenueFromContractWithCustomerExcludingAssessedTax",
+      "RevenueFromContractWithCustomerIncludingAssessedTax",
+      "SalesRevenueNet",
+      "SalesRevenueGoodsNet",
+      "Revenue"
+    ], { flow: true, quarter: true });
+
+    const debtRatio = debt?.value != null && marketCap > 0
+      ? debt.value / marketCap * 100
+      : null;
+
+    const depositsRatio = deposits?.value != null && marketCap > 0
+      ? deposits.value / marketCap * 100
+      : null;
+
+    const prohibitedRatio =
+      interest?.value != null &&
+      sales?.value > 0
+        ? interest.value / sales.value * 100
         : null;
 
-    const totalIncome = sales != null && sales > 0
-      ? { value: Math.abs(sales), source: "SEC Statement of Operations — current-quarter sales/revenue" }
-      : null;
-
-    const debtRatio = debt && marketCap > 0
-      ? (debt.value / marketCap) * 100
-      : null;
-
-    const depositsRatio = deposits && marketCap > 0
-      ? (deposits.value / marketCap) * 100
-      : null;
-
-    const prohibitedRatio = prohibitedIncome && totalIncome && totalIncome.value > 0
-      ? (prohibitedIncome.value / totalIncome.value) * 100
-      : null;
+    // If the filing contains operating data but no interest-income fact,
+    // use zero rather than leaving the check blank.
+    const interestCheck = interest
+      ? {
+          value: interest.value,
+          label: interest.label,
+          source: interest.source
+        }
+      : sales
+        ? {
+            value: 0,
+            label: "لا يوجد بند Interest income في حقائق XBRL",
+            source: "SEC XBRL companyfacts"
+          }
+        : null;
 
     const checks = {
       debt: {
@@ -152,21 +163,21 @@ exports.handler = async function (event) {
         source: debt?.source || null
       },
       interestTakingDeposits: {
-        numerator: deposits?.value ?? null,
+        numerator: deposits?.value ?? 0,
         denominator: marketCap,
         ratio: depositsRatio,
         limit: 30,
         pass: depositsRatio == null ? null : depositsRatio <= 30,
-        source: deposits?.source || null
+        source: deposits?.source || "SEC XBRL — no interest-bearing deposits fact found"
       },
       prohibitedIncome: {
-        numerator: prohibitedIncome?.value ?? null,
-        denominator: totalIncome?.value ?? null,
+        numerator: interestCheck?.value ?? null,
+        denominator: sales?.value ?? null,
         ratio: prohibitedRatio,
         limit: 5,
         pass: prohibitedRatio == null ? null : prohibitedRatio <= 5,
-        source: prohibitedIncome?.source || null,
-        incomeSource: prohibitedIncome?.label || null
+        source: interestCheck?.source || null,
+        incomeSource: interestCheck?.label || null
       }
     };
 
@@ -182,10 +193,10 @@ exports.handler = async function (event) {
         ? "compliant"
         : "rejected_financial";
 
-    return response(200, {
+    return json(200, {
       symbol,
       status,
-      activity: companyName,
+      activity,
       sic,
       sicDescription,
       filing: publicFiling(filing),
@@ -194,17 +205,27 @@ exports.handler = async function (event) {
       sharesOutstanding: shares,
       marketCapSource: market?.source || null,
       checks,
+      dataMethod: "SEC XBRL companyfacts",
       note: complete
-        ? "تم استخراج البيانات مباشرة من أحدث إفصاح SEC"
-        : "بعض البيانات لم يمكن تحديدها بثقة من أحدث إفصاح"
-    }, HEADERS);
+        ? "تم الفحص من بيانات SEC XBRL دون الحاجة إلى متغيرات بيئية"
+        : "بعض بيانات XBRL غير متوفرة بما يكفي للحسم"
+    });
   } catch (error) {
-    return response(500, {
+    return json(500, {
       error: "تعذر تشغيل الفحص الشرعي",
-      details: String(error?.message || error)
-    }, HEADERS);
+      details: String(error?.message || error),
+      source: "SEC EDGAR"
+    });
   }
 };
+
+function json(statusCode, body) {
+  return {
+    statusCode,
+    headers: CORS,
+    body: JSON.stringify(body)
+  };
+}
 
 function latestFiling(recent) {
   const forms = recent.form || [];
@@ -213,28 +234,30 @@ function latestFiling(recent) {
   const filingDates = recent.filingDate || [];
   const reportDates = recent.reportDate || [];
 
-  const candidates = [];
+  let best = null;
+
   for (let i = 0; i < forms.length; i++) {
     if (!["10-Q", "10-K", "20-F", "40-F"].includes(forms[i])) continue;
-    candidates.push({
+
+    const candidate = {
       form: forms[i],
-      accession: accessions[i],
-      primaryDocument: docs[i],
-      filingDate: filingDates[i],
-      reportDate: reportDates[i]
-    });
+      accession: accessions[i] || null,
+      primaryDocument: docs[i] || null,
+      filingDate: filingDates[i] || null,
+      reportDate: reportDates[i] || null
+    };
+
+    const key = String(candidate.reportDate || candidate.filingDate || "");
+    const bestKey = String(best?.reportDate || best?.filingDate || "");
+
+    if (!best || key > bestKey) best = candidate;
   }
 
-  candidates.sort((a, b) =>
-    String(b.reportDate || b.filingDate || "").localeCompare(
-      String(a.reportDate || a.filingDate || "")
-    )
-  );
-
-  return candidates[0] || null;
+  return best;
 }
 
 function publicFiling(filing) {
+  if (!filing) return null;
   return {
     form: filing.form,
     filingDate: filing.filingDate,
@@ -244,141 +267,87 @@ function publicFiling(filing) {
   };
 }
 
-function extractRows(html) {
-  const source = String(html || "");
-  const rows = [];
-  const re = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
-  let m;
+function findFact(facts, names, options) {
+  const namespaces = facts?.facts || {};
+  const candidates = [];
 
-  while ((m = re.exec(source))) {
-    const cells = [];
-    const cellRe = /<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi;
-    let c;
+  for (const [namespace, tags] of Object.entries(namespaces)) {
+    for (const [tagName, tag] of Object.entries(tags || {})) {
+      if (!names.some(name => tagName.toLowerCase() === name.toLowerCase())) {
+        continue;
+      }
 
-    while ((c = cellRe.exec(m[1]))) {
-      const value = decodeHtml(
-        c[1]
-          .replace(/<br\s*\/?>/gi, " ")
-          .replace(/<[^>]+>/g, " ")
-      )
-        .replace(/\u00a0/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+      for (const unitValues of Object.values(tag.units || {})) {
+        for (const item of unitValues || []) {
+          if (!item || item.val == null) continue;
+          if (options?.quarter && !isQuarterFact(item)) continue;
 
-      if (value) cells.push(value);
-    }
+          const value = Number(item.val);
+          if (!Number.isFinite(value)) continue;
 
-    if (cells.length >= 2) {
-      rows.push({
-        label: cells[0],
-        cells,
-        values: cells.slice(1).map(parseMoney).filter(v => v !== null)
-      });
-    }
-  }
-
-  return rows;
-}
-
-function findRowValue(rows, labelRegex) {
-  for (const row of rows) {
-    if (labelRegex.test(row.label) && row.values.length) {
-      return row.values[0];
+          candidates.push({
+            value: Math.abs(value),
+            tag: namespace + ":" + tagName,
+            form: item.form || "",
+            filed: item.filed || "",
+            end: item.end || "",
+            start: item.start || "",
+            fp: item.fp || "",
+            frame: item.frame || ""
+          });
+        }
+      }
     }
   }
-  return null;
+
+  if (!candidates.length) return null;
+
+  candidates.sort((a, b) => {
+    const end = String(b.end).localeCompare(String(a.end));
+    if (end) return end;
+    return String(b.filed).localeCompare(String(a.filed));
+  });
+
+  const chosen = candidates[0];
+
+  return {
+    value: chosen.value,
+    label: chosen.tag,
+    source:
+      "SEC XBRL — " +
+      chosen.tag +
+      (chosen.end ? " through " + chosen.end : "")
+  };
 }
 
-function findDebt(rows, text) {
-  const labels = [
-    /^(?:current portion of\s+)?convertible notes? payable(?:,?\s+net)?$/i,
-    /^(?:current portion of\s+)?convertible debt$/i,
-    /^(?:current portion of\s+)?notes payable(?:,?\s+net)?$/i,
-    /^(?:current portion of\s+)?bank borrowings?$/i,
-    /^(?:current portion of\s+)?term loans?$/i,
-    /^(?:current portion of\s+)?loans payable$/i,
-    /^(?:current portion of\s+)?long[- ]term borrowings?$/i,
-    /^(?:current portion of\s+)?short[- ]term borrowings?$/i,
-    /^senior notes?(?:,?\s+net)?$/i,
-    /^interest[- ]bearing debt$/i
-  ];
+function isQuarterFact(item) {
+  if (!item.start || !item.end) return true;
 
-  const found = [];
-  for (const row of rows) {
-    if (!labels.some(re => re.test(row.label))) continue;
-    if (!row.values.length) continue;
-    found.push({ value: Math.abs(row.values[0]), label: row.label });
-  }
+  const start = new Date(item.start + "T00:00:00Z").getTime();
+  const end = new Date(item.end + "T00:00:00Z").getTime();
 
-  if (found.length) {
-    const seen = new Set();
-    const unique = found.filter(x => {
-      const key = x.label + "|" + x.value;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return true;
 
-    return {
-      value: unique.reduce((s, x) => s + x.value, 0),
-      source: unique.map(x => x.label).slice(0, 6).join(" | ")
-    };
-  }
+  const days = (end - start) / 86400000;
 
-  if (/\btotal assets\b/i.test(text) && /\btotal liabilities\b/i.test(text)) {
-    return {
-      value: 0,
-      source: "SEC balance sheet — no interest-bearing debt disclosed"
-    };
-  }
-
-  return null;
+  // Quarterly facts are normally about 70–110 days.
+  return days >= 60 && days <= 130;
 }
 
-function findDeposits(rows, text) {
-  const re = /interest[- ]bearing deposits?|interest[- ]taking deposits?/i;
+function extractSharesFromFacts(facts) {
+  const usgaap = facts?.facts?.["dei"] || {};
+  const tag =
+    usgaap.EntityCommonStockSharesOutstanding ||
+    usgaap.EntityCommonStockSharesOutstandingMember;
 
-  for (const row of rows) {
-    if (!re.test(row.label) || !row.values.length) continue;
-    return {
-      value: Math.abs(row.values[0]),
-      source: row.label
-    };
-  }
+  if (!tag) return null;
 
-  if (/\btotal assets\b/i.test(text) && /\btotal liabilities\b/i.test(text)) {
-    return {
-      value: 0,
-      source: "SEC balance sheet — no interest-bearing deposits disclosed"
-    };
-  }
+  const values = Object.values(tag.units || {}).flat();
+  const valid = values
+    .filter(x => Number.isFinite(Number(x.val)))
+    .sort((a, b) => String(b.end || b.filed || "").localeCompare(String(a.end || a.filed || "")));
 
-  return null;
-}
-
-function hasOperationsData(rows, text) {
-  const hasSales = rows.some(r => /^(?:sales|net sales|revenue|revenues)$/i.test(r.label));
-  const hasLoss = rows.some(r => /^net loss(?: attributable.*)?$/i.test(r.label));
-  return hasSales && hasLoss || (
-    /\b(?:sales|revenue|revenues)\b/i.test(text) &&
-    /\bnet loss\b/i.test(text)
-  );
-}
-
-function extractShares(text) {
-  const patterns = [
-    /([0-9][0-9,]+)\s+(?:common\s+)?shares?\s+(?:issued\s+and\s+)?outstanding\s+as\s+of\s+[A-Z][a-z]+\s+\d{1,2},\s+20\d{2}/i,
-    /([0-9][0-9,]+)\s+shares?[^\n]{0,120}?outstanding\s+as\s+of\s+[A-Z][a-z]+\s+\d{1,2},\s+20\d{2}/i
-  ];
-
-  for (const re of patterns) {
-    const m = String(text || "").match(re);
-    if (!m) continue;
-    const n = parseMoney(m[1]);
-    if (n > 1000) return n;
-  }
-
-  return null;
+  return valid.length ? Number(valid[0].val) : null;
 }
 
 async function getMarket(symbol) {
@@ -414,48 +383,14 @@ async function getMarket(symbol) {
   }
 }
 
-async function getJson(url, headers) {
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error("تعذر جلب بيانات SEC");
+async function getJson(url) {
+  const res = await fetch(url, { headers: SEC_HEADERS });
+
+  if (!res.ok) {
+    throw new Error(
+      "SEC HTTP " + res.status + " عند جلب " + url
+    );
+  }
+
   return res.json();
-}
-
-async function getText(url, headers) {
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error("تعذر جلب ملف الإفصاح المالي من SEC");
-  return res.text();
-}
-
-function htmlToText(html) {
-  return decodeHtml(
-    String(html || "")
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\u00a0/g, " ")
-      .replace(/\s+/g, " ")
-  );
-}
-
-function parseMoney(value) {
-  let s = String(value ?? "").trim();
-  if (!s || s === "-" || s === "—" || s === "–") return null;
-
-  const negative = /^\(.*\)$/.test(s);
-  s = s.replace(/[$,%(),\s]/g, "").replace(/,/g, "");
-
-  const n = Number(s);
-  if (!Number.isFinite(n)) return null;
-  return negative ? -n : n;
-}
-
-function decodeHtml(value) {
-  return String(value || "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">");
 }
