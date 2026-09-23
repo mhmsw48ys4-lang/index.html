@@ -472,6 +472,14 @@ onclick="scanSplits()">
 
 
 
+
+<div class="shariah" style="max-width:900px;margin:0 auto 20px;padding:18px;background:#0d1c2c;border:1px solid #203b50;border-radius:18px">
+<div class="scannerTitle">☪️ الفرز الشرعي — AAOIFI</div>
+<div class="scannerDesc">يفحص نشاط الشركة أولاً. إذا كان النشاط غير جائز تُستبعد مباشرة. وإذا كان النشاط مباحاً ينتقل للفحص المالي باستخدام أحدث تقرير مالي منشور من SEC، مع القيمة السوقية الحالية وقت الفحص. الكاش العادي لا يُعتبر تلقائياً وديعة بفائدة، ولا يتم افتراض القيم المفقودة.</div>
+<textarea id="shariahInput" class="scanInput" placeholder="مثال:\nNTCL\nPN\nFEMY\nAMIX\n\nأو اكتب الرموز مفصولة بفواصل"></textarea>
+<button class="scanButton" onclick="scanShariah()">☪️ بدء فرز AAOIFI</button>
+<div id="shariahStatus" class="scanStatus"></div><div id="shariahResults" class="scanResults"></div>
+</div>
 <script>
 
 const stocks={};
@@ -2471,6 +2479,12 @@ addStock();
 }
 );
 
+
+function parseShariahSymbols(){const t=document.getElementById("shariahInput").value.trim().toUpperCase();return t?[...new Set(t.split(/[\\s,،;]+/).filter(Boolean))]:[];}
+function shMoney(v){if(v==null||!Number.isFinite(Number(v)))return "-";let n=Number(v);if(Math.abs(n)>=1e9)return "$"+(n/1e9).toFixed(2)+"B";if(Math.abs(n)>=1e6)return "$"+(n/1e6).toFixed(2)+"M";if(Math.abs(n)>=1e3)return "$"+(n/1e3).toFixed(1)+"K";return "$"+n.toFixed(2);}
+function shRow(title,x){if(!x)return "";let s=x.pass===true?"اجتاز":x.pass===false?"لم يجتز":"بيانات غير كافية";let cl=x.pass===true?"green":x.pass===false?"red":"yellow";let ratio=x.ratio==null?"-":Number(x.ratio).toFixed(2)+"%";return '<div class="row"><span>'+title+'</span><strong class="'+cl+'">'+s+' — '+ratio+' (الحد '+x.limit+'%)</strong></div>';}
+function renderShariah(a){let st=a.status==="compliant"?"متوافق مع شروط الفحص المطبقة":a.status==="rejected_activity"?"مستبعد بسبب النشاط":a.status==="rejected_financial"?"لم يجتز الفحص المالي":"لا يمكن الحسم — بيانات غير كافية";let cl=a.status==="compliant"?"green":a.status==="insufficient"?"yellow":"red";return '<div class="scanCard"><div class="scanHead"><div class="scanSymbol">'+escapeHtml(a.symbol)+'</div><div class="'+cl+'">'+st+'</div></div><div class="scanGrid"><div class="scanItem"><div class="scanLabel">نشاط الشركة</div><div class="scanValue">'+escapeHtml(a.sicDescription||a.activity||"-")+'</div></div><div class="scanItem"><div class="scanLabel">SIC</div><div class="scanValue">'+escapeHtml(a.sic||"-")+'</div></div><div class="scanItem"><div class="scanLabel">آخر تقرير</div><div class="scanValue">'+escapeHtml((a.filing?.form||"-")+" — "+(a.filing?.reportDate||"-"))+'</div></div><div class="scanItem"><div class="scanLabel">القيمة السوقية وقت الفحص</div><div class="scanValue">'+shMoney(a.marketCap)+'</div></div></div><div class="box" style="margin:12px 0 0"><div class="boxTitle">حسابات AAOIFI</div>'+shRow("الديون القائمة على الفائدة",a.checks?.debt)+shRow("الودائع التي تأخذ فائدة",a.checks?.interestTakingDeposits)+shRow("الدخل من المكونات المحرمة",a.checks?.prohibitedIncome)+'</div><div class="scanStatus">'+escapeHtml(a.reason||a.note||"")+'</div></div>';}
+async function scanShariah(){const syms=parseShariahSymbols(),s=document.getElementById("shariahStatus"),r=document.getElementById("shariahResults");r.innerHTML="";if(!syms.length){s.innerHTML='<div class="error">أدخل رموز الأسهم أولاً.</div>';return;}let out=[],err=[];for(let i=0;i<syms.length;i++){s.textContent="جاري فحص AAOIFI لـ "+syms[i]+" — "+(i+1)+" من "+syms.length+"...";try{let q=await fetch("/.netlify/functions/shariah?symbol="+encodeURIComponent(syms[i]),{cache:"no-store"}),j=await q.json();if(!q.ok)throw new Error(j.error||"فشل الفحص");out.push(j);}catch(e){err.push(syms[i]+": "+e.message);}}s.textContent="انتهى فحص AAOIFI ✓ — تم فحص "+out.length+" من "+syms.length+" رمز.";r.innerHTML=out.map(renderShariah).join("")+(err.length?'<div class="error">تعذر فحص:<br>'+escapeHtml(err.join("\n"))+'</div>':"");}
 </script>
 
 </body>
