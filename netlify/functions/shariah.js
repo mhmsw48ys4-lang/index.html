@@ -521,17 +521,31 @@ function decode(text) {
 
 async function yahoo(symbol) {
   try {
-    const url =
+    const quoteUrl =
       "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
       encodeURIComponent(symbol);
 
-    const r = await fetch(url, {
+    const quoteResponse = await fetch(quoteUrl, {
       headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }
     });
 
-    if (r.ok) {
-      const q = (await r.json()).quoteResponse &&
-        (await Promise.resolve({r: q})); // unreachable helper avoided below
+    if (quoteResponse.ok) {
+      const body = await quoteResponse.json();
+      const q = body.quoteResponse && body.quoteResponse.result &&
+        body.quoteResponse.result[0];
+
+      if (q) {
+        const price = Number(q.regularMarketPrice || q.postMarketPrice);
+        const marketCap = Number(q.marketCap);
+        const shares = Number(q.sharesOutstanding);
+
+        return {
+          price: Number.isFinite(price) && price > 0 ? price : null,
+          marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
+          shares: Number.isFinite(shares) && shares > 0 ? shares : null,
+          source: "Yahoo Finance"
+        };
+      }
     }
   } catch (_) {}
 
