@@ -484,8 +484,24 @@ function findInterestBearingDebt(text, usgaap, filing) {
     };
   }
 
-  // If there is a clear balance sheet but no debt/loan row, do not invent a
-  // number. Missing disclosure remains "insufficient data".
+  // If the balance sheet explicitly lists its liabilities and none of the
+  // listed liability classes are interest-bearing debt, the AAOIFI debt
+  // numerator is zero. This is different from an undisclosed balance sheet:
+  // we only return zero when the statement is sufficiently complete.
+  const liabilityStart = lines.findIndex(x => /^(?:liabilities|current liabilities)\\b/i.test(x));
+  const totalLiabilityIndex = lines.findIndex(x => /^total liabilities\\b/i.test(x));
+  if (totalLiabilityIndex >= 0) {
+    const start = liabilityStart >= 0 ? liabilityStart : Math.max(0, totalLiabilityIndex - 20);
+    const liabilityLines = lines.slice(start, totalLiabilityIndex + 1);
+    const debtLike = liabilityLines.some(x =>
+      /^(?:convertible debt|convertible note|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?|debt|notes payable)\\b/i.test(x)
+    );
+    if (!debtLike) {
+      return { value: 0, source: "SEC balance sheet — no interest-bearing debt line disclosed" };
+    }
+  }
+
+  // Missing or ambiguous disclosure remains insufficient; never guess.
   return null;
 }
 function extractLabeledAmount(text, regex) {
