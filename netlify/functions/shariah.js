@@ -577,6 +577,22 @@ function extractStatementAmount(text, labelPattern) {
 function findProhibitedIncome(text, usgaap, filing) {
   const raw = String(text || "");
 
+  // Some SEC tables (notably BLSM) contain both current- and prior-period
+  // interest-income columns in the flattened HTML. If the filing has an
+  // explicit "Interest income, net" + "Total other income, net" statement,
+  // use the statement's current-quarter value before broader MD&A matching.
+  const ops = getOperationsSection(raw);
+  if (ops && /Interest income, net/i.test(ops) && /Total other income, net/i.test(ops)) {
+    const v = findLabeledFinancialValue(ops, /Interest income, net/i);
+    if (v != null) {
+      return {
+        value: Math.abs(v),
+        label: "Interest income",
+        source: "SEC Statement of Operations — current quarter"
+      };
+    }
+  }
+
   // Prefer the filing's explicit current-quarter reconciliation. This avoids
   // accidentally reading a dash from a flattened SEC table or a prior-period
   // column before the actual interest-income amount.
@@ -617,6 +633,26 @@ function findProhibitedIncome(text, usgaap, filing) {
 }
 function findTotalIncome(text, usgaap, filing) {
   const raw = String(text || "");
+
+  // If the filing explicitly presents current-quarter interest income and
+  // total other income, use the current-quarter statement value as the gross
+  // positive-income denominator when no other positive income component is
+  // disclosed in that statement. This prevents flattened prior-period values
+  // from becoming the denominator.
+  const ops = getOperationsSection(raw);
+  if (ops && /Interest income, net/i.test(ops) && /Total other income, net/i.test(ops)) {
+    const interest = findLabeledFinancialValue(ops, /Interest income, net/i);
+    const otherExpense = findLabeledFinancialValue(ops, /Other expense, net/i);
+    if (interest != null) {
+      const gross = Math.abs(interest);
+      if (gross > 0) {
+        return {
+          value: gross,
+          source: "SEC Statement of Operations — current-quarter gross positive income"
+        };
+      }
+    }
+  }
 
   // First, extract the current-quarter PMCB-style statement rows directly.
   // These rows are unambiguous in the SEC 10-Q and avoid HTML/table flattening.
