@@ -731,29 +731,30 @@ function extractFlattenedIncomeComponents(text) {
 
 function extractCurrentQuarterGrossPositiveIncome(text) {
   const rowLabels = [
-    /^(?:sales|revenue(?:s)?|net sales)\\b/i,
-    /^interest income(?:,?\\s+net)?\\b/i,
-    /^dividend income\\b/i,
-    /^change in fair value of conversion option liability\\b/i,
-    /^change in fair value of warrants? liabilities?\\b/i,
-    /^change in fair value of .* liability\\b/i,
-    /^gain (?:on|from)\\b/i
+    /^Sales\\s*\\|/i,
+    /^(?:Revenue(?:s)?|Net Sales)\\s*\\|/i,
+    /^Interest Income(?:,?\\s+Net)?\\s*\\|/i,
+    /^Dividend Income\\s*\\|/i,
+    /^Change in Fair Value of Conversion Option Liability\\s*\\|/i,
+    /^Change in Fair Value of Warrants? Liabilities?\\s*\\|/i,
+    /^Change in Fair Value of .* Liability\\s*\\|/i,
+    /^Gain (?:on|from)\\b/i
   ];
 
   const section = getPrimaryOperationsStatementSection(text);
   if (!section) return null;
 
   const values = [];
-  const lines = section.split(/\\r?\\n/).map(normalizeLine).filter(Boolean);
+  const lines = section.split(/\r?\n/).map(normalizeLine).filter(Boolean);
 
   for (const line of lines) {
     for (const label of rowLabels) {
       if (!label.test(line)) continue;
 
-      // With table-cell separators preserved, the first numeric token after
-      // the row label is the current-quarter column.
+      // Table cells are preserved by cleanText; the first numeric token after
+      // the row label is the current-quarter value.
       const after = line.replace(label, " ");
-      const nums = after.match(/\\(?[0-9][0-9,]*(?:\\.\\d+)?\\)?/g) || [];
+      const nums = after.match(/\(?[0-9][0-9,]*(?:\.\d+)?\)?/g) || [];
 
       if (nums.length) {
         const n = Math.abs(parseNumber(nums[0]));
