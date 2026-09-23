@@ -565,20 +565,42 @@ function getOperationsSection(text) {
   return null;
 }
 
+function extractStatementAmount(text, labelPattern) {
+  const raw = String(text || "");
+  const re = new RegExp(labelPattern + "[^\\n]{0,180}?(?:—|–|-|\\$?\\s*\\(?([0-9][0-9,]*(?:\\.\\d+)?)\\)?)", "i");
+  const m = raw.match(re);
+  if (!m) return null;
+  const n = parseNumber(m[1]);
+  return Number.isFinite(n) ? Math.abs(n) : null;
+}
+
 function findProhibitedIncome(text, usgaap, filing) {
   const section = getOperationsSection(text);
-  const lines = (section || text).split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const regex = /(?:^|\s)(?:interest income|interest revenue|income from interest)(?:\s|,|$)/i;
+  const sources = [section, text].filter(Boolean);
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!regex.test(line) || /interest expense|interest expenses|net interest income \(expense\)/i.test(line)) continue;
-    const value = firstFinancialValueAfterLabel(line, regex);
-    if (value != null) {
+  for (const sourceText of sources) {
+    const lines = sourceText.split(/\\r?\\n/).map(normalizeLine).filter(Boolean);
+    const regex = /(?:^|\\s)interest income(?:,?\\s+net)?(?:\\s|,|$)/i;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!regex.test(line) || /interest expense|interest expenses|net interest income \\(expense\\)/i.test(line)) continue;
+      const value = firstFinancialValueAfterLabel(line, regex);
+      if (value != null) {
+        return {
+          value: Math.abs(value),
+          label: "Interest income",
+          source: line.slice(0, 220)
+        };
+      }
+    }
+
+    const direct = extractStatementAmount(sourceText, "interest income(?:,?\\s+net)?");
+    if (direct != null) {
       return {
-        value: Math.abs(value),
+        value: direct,
         label: "Interest income",
-        source: line.slice(0, 220)
+        source: "SEC Statement of Operations"
       };
     }
   }
@@ -602,12 +624,12 @@ function findProhibitedIncome(text, usgaap, filing) {
 }
 
 function findTotalIncome(text, usgaap, filing) {
-  // Use the actual Statement of Operations occurrence, not the Table of Contents.
   const section = getOperationsSection(text);
-  const lines = (section || "").split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  const source = section || text;
+  const lines = source.split(/\\r?\\n/).map(normalizeLine).filter(Boolean);
 
-  const revenueRegex = /^(?:revenue|revenues|revenue,? net|total revenue|net sales|sales revenue|operating revenue)\b/i;
-  const interestRegex = /^(?:interest income|interest revenue|income from interest)(?:\s|,|$)/i;
+  const revenueRegex = /^(?:revenue|revenues|revenue,? net|total revenue|net sales|sales revenue|operating revenue)\\b/i;
+  const interestRegex = /^(?:interest income|interest revenue|income from interest)(?:,?\\s+net)?(?:\\s|,|$)/i;
 
   let revenue = null;
   let interestIncome = null;
@@ -628,11 +650,31 @@ function findTotalIncome(text, usgaap, filing) {
     }
 
     const incomeRow =
-      /^(?:dividend income|gain on|gain from|gain in|change in fair value of .* liability|change in fair value of .* asset|income from|other income)\b/i;
+      /^(?:dividend income|gain on|gain from|gain in|change in fair value of .* liability|change in fair value of .* asset|income from|other income)\\b/i;
 
     if (incomeRow.test(line) &&
         !/expense|expenses|loss|decrease|decreases/i.test(line)) {
       const v = firstFinancialValueAfterLabel(line, incomeRow);
+      if (v != null && v > 0) otherIncome += v;
+    }
+  }
+
+  // Robust fallback for SEC HTML where table cells are flattened onto one line.
+  if (interestIncome == null) {
+    const v = extractStatementAmount(source, "interest income(?:,?\\s+net)?");
+    if (v != null) interestIncome = v;
+  }
+
+  if (otherIncome === 0) {
+    const labels = [
+      "dividend income",
+      "change in fair value of warrant liability",
+      "change in fair value of derivative liability",
+      "gain on legal settlement",
+      "income from"
+    ];
+    for (const label of labels) {
+      const v = extractStatementAmount(source, label);
       if (v != null && v > 0) otherIncome += v;
     }
   }
