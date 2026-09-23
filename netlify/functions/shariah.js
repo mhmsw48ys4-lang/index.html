@@ -373,53 +373,49 @@ function findSharesOutstanding(text, usgaap, dei, filing) {
 }
 
 function findInterestBearingDebt(text, usgaap, filing) {
-  // Prefer explicit interest-bearing/bank borrowing concepts.
-  const fact = latestFactFromFacts([
-    "LongTermDebtCurrent",
-    "LongTermDebtNoncurrent",
-    "LongTermDebt",
-    "ShortTermBorrowings",
-    "ShortTermDebt",
-    "LongTermBorrowingsCurrent",
-    "LongTermBorrowingsNoncurrent"
-  ], usgaap, {}, filing);
+  const currentConvertible = extractLabeledAmount(text, /(?:^|\n)\s*Convertible debt\s+\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i);
+  const bankLoan = extractLabeledAmount(text, /(?:^|\n)\s*Long-term bank loan\s+\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i);
 
-  // Text extraction is necessary for custom concepts/6-K financial statements.
+  const explicit = [];
+  if (currentConvertible != null) explicit.push({ label: "Convertible debt", value: currentConvertible });
+  if (bankLoan != null) explicit.push({ label: "Long-term bank loan", value: bankLoan });
+
+  if (explicit.length) {
+    return {
+      value: explicit.reduce((sum, x) => sum + x.value, 0),
+      source: explicit.map(x => x.label + ": $" + x.value.toLocaleString("en-US")).join(" + ")
+    };
+  }
+
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const matched = [];
   const debtRegex = /(?:convertible debt|convertible note|bank borrowings|bank borrowing|short[- ]term borrowings|long[- ]term borrowings|long[- ]term bank loan|borrowings[- ]current|borrowings[- ]non[- ]current|interest[- ]bearing (?:debt|loans|borrowings)|loans payable)/i;
-
+  const matched = [];
   for (const line of lines) {
     if (!debtRegex.test(line)) continue;
     const nums = numbersFromLine(line);
-    if (nums.length) {
-      matched.push({ label: line.slice(0, 180), value: nums[0] });
-    }
+    if (nums.length) matched.push({ label: line.slice(0, 180), value: nums[0] });
   }
-
   if (matched.length) {
-    // Remove duplicate comparative/table echoes by keeping the largest unique
-    // current-period line items. We intentionally exclude accounts payable.
     const unique = [];
     for (const item of matched) {
-      if (!unique.some(x => Math.abs(x.value - item.value) < 0.01 && x.label === item.label)) {
-        unique.push(item);
-      }
+      if (!unique.some(x => Math.abs(x.value - item.value) < 0.01 && x.label === item.label)) unique.push(item);
     }
     const sum = unique.reduce((a, x) => a + x.value, 0);
-    if (sum > 0) {
-      return {
-        value: sum,
-        source: unique.map(x => x.label).slice(0, 6).join(" | ")
-      };
-    }
+    if (sum > 0) return { value: sum, source: unique.map(x => x.label).slice(0, 6).join(" | ") };
   }
 
-  if (fact?.value != null) {
-    return { value: fact.value, source: "SEC XBRL" };
-  }
+  const fact = latestFactFromFacts([
+    "LongTermDebtCurrent","LongTermDebtNoncurrent","LongTermDebt","ShortTermBorrowings",
+    "ShortTermDebt","LongTermBorrowingsCurrent","LongTermBorrowingsNoncurrent"
+  ], usgaap, {}, filing);
+  return fact?.value != null ? { value: fact.value, source: "SEC XBRL" } : null;
+}
 
-  return null;
+function extractLabeledAmount(text, regex) {
+  const m = String(text || "").match(regex);
+  if (!m) return null;
+  const n = parseNumber(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function findInterestTakingDeposits(text, usgaap, filing) {
