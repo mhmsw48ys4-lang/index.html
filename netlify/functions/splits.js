@@ -53,7 +53,7 @@ exports.handler = async (event) => {
         x.executionDate || x.exDate || x.date || ""
       ).trim();
       let date = rawDate.slice(0, 10);
-      if (/^\\d{2}\\/\\d{2}\\/\\d{4}$/.test(rawDate)) {
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(rawDate)) {
         const [mm, dd, yyyy] = rawDate.split("/");
         date = yyyy + "-" + mm + "-" + dd;
       }
