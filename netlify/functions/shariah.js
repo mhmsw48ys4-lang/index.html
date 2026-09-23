@@ -646,92 +646,76 @@ function extractStatementAmount(text, labelPattern) {
 
 
 function extractSecCurrentQuarterIncomeComponents(text) {
-  // robust parser
-  const raw = String(text || "");
-  const lines = raw.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map(normalizeLine)
+    .filter(Boolean);
 
-  // SEC tables put the current quarter first in each row. Do not depend on
-  // the Statement title: SEC HTML formatting varies and the title may be
-  // split across several lines. Instead, locate the contiguous income
-  // statement block by its actual rows (Sales + Interest income).
-  const salesRe = /^Sales\b/i;
-  const interestRe = /^Interest income(?:,\s*net)?\b/i;
+  const getRow = (label) => {
+    const wanted = String(label).toLowerCase();
+    const candidates = [];
 
-  let best = null;
-  for (let i = 0; i < lines.length; i++) {
-    if (!salesRe.test(lines[i])) continue;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lower = line.toLowerCase();
 
-    for (let j = i + 1; j < Math.min(lines.length, i + 140); j++) {
-      if (!interestRe.test(lines[j])) continue;
+      if (!(lower === wanted || lower.startsWith(wanted + " "))) continue;
 
-      const block = lines.slice(i, Math.min(lines.length, j + 30));
-      const hasOtherIncome = block.some(x => /^Other income \(expense\):?/i.test(x));
-      const hasOperating = block.some(x => /^Total operating expenses\b/i.test(x));
-      const score = (hasOtherIncome ? 3 : 0) + (hasOperating ? 2 : 0) + (j - i <= 80 ? 2 : 0);
+      let value = firstFinancialValueAfterLabel(line, new RegExp("^" + label + "\\b", "i"));
 
-      if (!best || score > best.score) {
-        best = { lines: block, score };
+      if (value == null) {
+        for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
+          if (/^(sales|cost of sales|research and development|sales and marketing|general and administrative|depreciation and amortization|total operating expenses|loss from operations|interest income|dividend income|change in fair value|interest expense|other expense|total other income|net loss)\\b/i.test(lines[j])) break;
+          const nums = numbersFromLine(lines[j]);
+          if (nums.length) {
+            value = Math.abs(nums[0]);
+            break;
+          }
+        }
       }
-      break;
+
+      if (value == null) continue;
+
+      const before = lines.slice(Math.max(0, i - 20), i).join(" ").toLowerCase();
+      const after = lines.slice(i, Math.min(lines.length, i + 25)).join(" ").toLowerCase();
+
+      let score = 0;
+      if (before.includes("three months ended") || before.includes("quarter ended")) score += 5;
+      if (after.includes("total operating expenses")) score += 2;
+      if (after.includes("loss from operations")) score += 2;
+      if (after.includes("other income (expense)")) score += 2;
+      if (after.includes("net loss")) score += 1;
+
+      candidates.push({ value, index: i, score });
+    }
+
+    candidates.sort((a, b) => b.score - a.score || a.index - b.index);
+    return candidates[0] || null;
+  };
+
+  const sales = getRow("Sales");
+  const interest = getRow("Interest income");
+  if (!sales || !interest) return null;
+
+  const components = [
+    { key: "sales", value: sales.value },
+    { key: "interest", value: interest.value }
+  ];
+
+  for (const item of [
+    ["Dividend income", "dividend"],
+    ["Change in fair value of conversion option liability", "conversion"],
+    ["Change in fair value of warrants liabilities", "warrants"]
+  ]) {
+    const found = getRow(item[0]);
+    if (found && found.value > 0) {
+      components.push({ key: item[1], value: found.value });
     }
   }
 
-  if (!best) return null;
-  const section = best.lines;
-
-  const firstNumberAfterLabel = (line, labelRe) => {
-    const m = String(line || "").match(labelRe);
-    if (!m) return null;
-    const tail = String(line).slice(m.index + m[0].length);
-
-    // Current quarter is the first numeric cell after the row label.
-    const tokens = tail.match(/(?:—|–|-|\$?\s*\(?[0-9][0-9,]*(?:\.[0-9]+)?\)?)/g) || [];
-    for (const token of tokens) {
-      const t = String(token).trim();
-      if (t === "—" || t === "–" || t === "-") return 0;
-      const n = parseNumber(t);
-      if (Number.isFinite(n)) return Math.abs(n);
-    }
-    return null;
-  };
-
-  const findRow = (labelRe, excludeRe = null) => {
-    for (const line of section) {
-      if (excludeRe && excludeRe.test(line)) continue;
-      if (!labelRe.test(line)) continue;
-      const value = firstNumberAfterLabel(line, labelRe);
-      if (value != null) return value;
-    }
-    return null;
-  };
-
-  const sales = findRow(/^Sales\b/i, /^Sales (?:and|&)\s*(?:marketing|sales)/i);
-  const interest = findRow(/^Interest income(?:,\s*net)?\b/i);
-  const dividend = findRow(/^Dividend income\b/i);
-  const conversion = findRow(/^Change in fair value of conversion option liability\b/i);
-  const warrants = findRow(/^Change in fair value of warrants liabilities?\b/i);
-
-  const components = [];
-  const add = (key, value) => {
-    if (value != null && Number.isFinite(value) && value > 0) {
-      components.push({ key, value });
-    }
-  };
-
-  add("sales", sales);
-  add("interest", interest);
-  add("dividend", dividend);
-  add("conversion", conversion);
-  add("warrants", warrants);
-
-  const foundSales = components.find(x => x.key === "sales")?.value ?? null;
-  const foundInterest = components.find(x => x.key === "interest")?.value ?? null;
-
-  if (foundSales == null || foundInterest == null) return null;
-
   return {
-    total: components.reduce((sum, x) => sum + x.value, 0),
-    interest: foundInterest,
+    total: components.reduce((sum, item) => sum + item.value, 0),
+    interest: interest.value,
     components
   };
 }
