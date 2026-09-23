@@ -562,8 +562,11 @@ function getPrimaryOperationsStatementSection(text) {
   // We must skip that occurrence and select the actual financial table.
   while ((m = marker.exec(raw))) {
     const tail = raw.slice(m.index, m.index + 160000);
-    const stop = tail.search(/(?:condensed )?(?:statements of cash flows|statements of comprehensive (?:loss|income)|notes to (?:condensed )?financial statements)/i);
-    const section = stop > 0 ? tail.slice(0, stop) : tail;
+    // Do not let "and Comprehensive Loss" inside the statement title itself
+    // terminate the section. Search for the end marker only after the title.
+    const afterTitle = tail.slice(m[0].length);
+    const stop = afterTitle.search(/(?:condensed )?(?:statements of cash flows|statements of comprehensive (?:loss|income)|notes to (?:condensed )?financial statements)/i);
+    const section = stop > 0 ? afterTitle.slice(0, stop) : afterTitle;
 
     const hasPeriodHeader =
       /three months ended|three and six months ended|quarter ended|months ended/i.test(section);
