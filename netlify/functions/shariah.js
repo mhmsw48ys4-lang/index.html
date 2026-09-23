@@ -377,11 +377,11 @@ function findInterestBearingDebt(text, usgaap, filing) {
   // between the label and the current-period amount.
   const currentConvertible = extractLabeledAmount(
     text,
-    /Convertible debt[\\s\\S]{0,220}?\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i
+    /Convertible debt[\s\S]{0,220}?\\$?\s*([0-9][0-9,]*(?:\\.\\d+)?)/i
   );
   const bankLoan = extractLabeledAmount(
     text,
-    /Long-term bank loan[\\s\\S]{0,220}?\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i
+    /Long-term bank loan[\s\S]{0,220}?\\$?\s*([0-9][0-9,]*(?:\\.\\d+)?)/i
   );
 
   const explicit = [];
@@ -406,7 +406,7 @@ function findInterestBearingDebt(text, usgaap, filing) {
   // as zero. This is different from treating ordinary cash as an interest
   // deposit; it is based on the issuer's own financial statements.
   const hasDebtLabel = /(?:convertible debt|notes? payable|bank loan|bank borrowings|borrowings|interest[- ]bearing debt|loans payable|term loan|senior notes?)/i.test(text);
-  const noInterestPaid = /cash paid for interest[\\s\\S]{0,120}?(?:\\$?\\s*[—–-]|0(?:\\.0+)?)/i.test(text);
+  const noInterestPaid = /cash paid for interest[\s\S]{0,120}?(?:\\$?\s*[—–-]|0(?:\\.0+)?)/i.test(text);
   const hasBalanceSheet = /condensed consolidated balance sheets|consolidated balance sheets/i.test(text);
 
   if (hasBalanceSheet && !hasDebtLabel && noInterestPaid) {
@@ -455,10 +455,10 @@ function findInterestTakingDeposits(text, usgaap, filing) {
 
 function findProhibitedIncome(text, usgaap, filing) {
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const regex = /(?:^|\\s)(?:interest income|interest revenue|income from interest)(?:\\s|$)/i;
+  const regex = /(?:^|\s)(?:interest income|interest revenue|income from interest)(?:\s|$)/i;
 
   for (const line of lines) {
-    if (!regex.test(line) || /interest expense|interest expenses|net interest income \\(expense\\)/i.test(line)) continue;
+    if (!regex.test(line) || /interest expense|interest expenses|net interest income \(expense\)/i.test(line)) continue;
     const nums = numbersFromLine(line);
     if (nums.length) {
       // The first number on the income-statement row is the latest/current
@@ -496,7 +496,7 @@ function findTotalIncome(text, usgaap, filing) {
   // statement with separate revenue and other-income lines, build the
   // denominator from the positive income components of the current period.
   // Do not let a zero revenue line make the denominator disappear.
-  const revenueRegex = /^(?:revenue|revenues|total revenue|net sales|sales revenue|total income|operating revenue)\\b/i;
+  const revenueRegex = /^(?:revenue|revenues|total revenue|net sales|sales revenue|total income|operating revenue)\b/i;
   let revenue = null;
   let interestIncome = null;
   const otherPositive = [];
@@ -511,7 +511,7 @@ function findTotalIncome(text, usgaap, filing) {
       continue;
     }
 
-    if (/(?:^|\\s)interest income(?:\\s|$)/i.test(line) &&
+    if (/(?:^|\s)interest income(?:\s|$)/i.test(line) &&
         !/interest expense|interest expenses/i.test(line)) {
       if (interestIncome == null) interestIncome = v;
       continue;
