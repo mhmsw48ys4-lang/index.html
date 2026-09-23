@@ -618,21 +618,29 @@ function findProhibitedIncome(text, usgaap, filing) {
 function findTotalIncome(text, usgaap, filing) {
   const raw = String(text || "");
 
-  // Prefer an explicit current-quarter reconciliation when the filing gives
-  // the positive components of "other income (expenses), net". Use the LAST
-  // occurrence because the MD&A discussion comes after the financial tables
-  // and avoids prior-period/table-column ambiguity.
-  const marker = "is attributable to";
-  const markerIndex = raw.toLowerCase().lastIndexOf(marker);
-  if (markerIndex >= 0) {
-    const part = raw.slice(markerIndex + marker.length, markerIndex + 1800);
+  // For AAOIFI 3/4/4 use the current-quarter gross positive income
+  // components. PMCB's MD&A explicitly reconciles "other income
+  // (expenses), net" by listing the positive components, followed by
+  // "less" for the negative components. Restrict the extraction to that
+  // one reconciliation so prior-year columns cannot enter the denominator.
+  const reconciliation =
+    /Other income \(expenses\), net,[\s\S]{0,1200}?is attributable to([\s\S]{0,900}?)(?:,\s*less\b|\bless\b)/gi;
+
+  const matches = [];
+  let rm;
+  while ((rm = reconciliation.exec(raw))) {
+    const part = rm[1];
+    if (/interest income/i.test(part)) matches.push(part);
+  }
+
+  if (matches.length) {
+    const part = matches[matches.length - 1];
     const positiveLabels = [
       /interest income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
       /dividend income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
       /change in fair value of warrant liability(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
       /change in fair value of derivative liability(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
-      /gain on legal settlement(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
-      /income from[^\$\d]{0,30}\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i
+      /gain on legal settlement(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i
     ];
 
     const positive = [];
@@ -648,11 +656,14 @@ function findTotalIncome(text, usgaap, filing) {
     if (explicitTotal > 0) {
       return {
         value: explicitTotal,
-        source: "SEC MD&A — explicit positive income components for current quarter"
+        source: "SEC MD&A — current-quarter gross positive income components"
       };
     }
   }
 
+  // Fallback for filings that do not provide an explicit reconciliation.
+  // Keep the existing statement-based extraction, but only use it when the
+  // current-quarter reconciliation above is unavailable.
   const section = getOperationsSection(raw);
   const source = section || raw;
   const lines = source.split(/\r?\n/).map(normalizeLine).filter(Boolean);
@@ -680,7 +691,6 @@ function findTotalIncome(text, usgaap, filing) {
     }
   }
 
-  // Fallback for flattened SEC HTML tables where the row boundaries are lost.
   const directLabels = [
     /revenue(?:,? net)?/i,
     /interest income(?:,?\s+net)?/i,
