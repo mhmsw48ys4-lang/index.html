@@ -96,25 +96,21 @@ exports.handler = async (event) => {
 
     const map = new Map();
 
-    for (const item of lists) {
-      if (item.status !== "fulfilled") continue;
+    for (const q of quotes) {
+      const symbol = String(q.symbol || "").trim().toUpperCase();
+      const price = Number(q.regularMarketPrice);
+      const marketCap = Number(q.marketCap);
 
-      for (const q of item.value) {
-        const symbol = String(q.symbol || "").trim().toUpperCase();
-        const price = Number(q.regularMarketPrice);
-        const marketCap = Number(q.marketCap);
-
-        if (
-          symbol &&
-          /^[-A-Z0-9.]+$/.test(symbol) &&
-          Number.isFinite(price) &&
-          price >= 1 &&
-          price <= 7 &&
-          Number.isFinite(marketCap) &&
-          marketCap <= 10000000
-        ) {
-          map.set(symbol, q);
-        }
+      if (
+        symbol &&
+        /^[-A-Z0-9.]+$/.test(symbol) &&
+        Number.isFinite(price) &&
+        price >= 1 &&
+        price <= 7 &&
+        Number.isFinite(marketCap) &&
+        marketCap <= 10000000
+      ) {
+        map.set(symbol, q);
       }
     }
 
