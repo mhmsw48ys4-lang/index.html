@@ -110,11 +110,7 @@ exports.handler = async function (event) {
       "InterestBearingDepositsLiability"
     ], { balance: true });
 
-    const deposits = depositsFact || {
-      value: 0,
-      label: "لا يوجد بند ودائع تأخذ فائدة مفصح عنه",
-      source: "SEC XBRL + latest SEC filing — no interest-bearing deposits line found"
-    };
+    const deposits = depositsFact || findInterestBearingDepositsInRows(filingRows);
 
     // Prefer the actual filing table. This prevents a generic "financing income, net"
     // XBRL tag from being mistaken for pure interest income.
@@ -185,12 +181,12 @@ exports.handler = async function (event) {
         source: debt?.source || null
       },
       interestTakingDeposits: {
-        numerator: deposits?.value ?? 0,
+        numerator: deposits?.value ?? null,
         denominator: marketCap,
         ratio: depositsRatio,
         limit: 30,
         pass: depositsRatio == null ? null : depositsRatio <= 30,
-        source: deposits?.source || "SEC XBRL — no interest-bearing deposits fact found"
+        source: deposits?.source || null
       },
       prohibitedIncome: {
         numerator: interestCheck?.value ?? null,
@@ -473,6 +469,19 @@ function findDebtInRows(rows) {
     value: unique.reduce((sum,x) => sum + x.value, 0),
     source: "SEC filing balance sheet — " + unique.map(x => x.label).slice(0,6).join(" | ")
   };
+}
+
+function findInterestBearingDepositsInRows(rows) {
+  for (const row of rows) {
+    if (/(?:interest[- ]bearing\s+deposits?|interest[- ]bearing\s+securities|interest[- ]bearing\s+investments?)/i.test(row.label) && row.values.length) {
+      return {
+        value: Math.abs(row.values[0]),
+        label: row.label,
+        source: "SEC filing balance sheet/notes — explicit interest-bearing deposits or investments"
+      };
+    }
+  }
+  return null;
 }
 
 function findInterestInRows(rows) {
