@@ -210,13 +210,13 @@ function getDebt(facts, rows, filing) {
   // Use the selected filing first. This prevents a debt fact from an older
   // quarter or a different XBRL context being attached to this ticker.
   const explicit = rows.filter(r =>
-    /(convertible\\s+(notes?|debt)|notes?\\s+payable|term\\s+loans?|loans?\\s+payable|long[- ]term\\s+(debt|borrowings?)|short[- ]term\\s+(borrowings?|debt)|senior\\s+notes?|interest[- ]bearing\\s+debt)/i.test(r.label) &&
+    /(convertible\s+(notes?|debt)|notes?\s+payable|term\s+loans?|loans?\s+payable|long[- ]term\s+(debt|borrowings?)|short[- ]term\s+(borrowings?|debt)|senior\s+notes?|interest[- ]bearing\s+debt)/i.test(r.label) &&
     r.values.length
   );
 
   if (explicit.length) {
     const total = explicit.find(r =>
-      /^total\\s+(debt|borrowings?|notes?\\s+payable)$/i.test(r.label)
+      /^total\s+(debt|borrowings?|notes?\s+payable)$/i.test(r.label)
     );
 
     if (total) {
@@ -263,7 +263,7 @@ function getDebt(facts, rows, filing) {
 function getDeposits(facts, rows, filing) {
   // Do not turn missing disclosure into zero.
   // Also do not reuse an older InterestBearingDeposits fact.
-  const re = /interest[- ]bearing\\s+(deposits?|securities|investments?)/i;
+  const re = /interest[- ]bearing\s+(deposits?|securities|investments?)/i;
   for (const r of rows) {
     if (re.test(r.label) && r.values.length) {
       return {
@@ -320,7 +320,7 @@ function getSales(facts, rows, filing) {
     "RevenueFromContractWithCustomerIncludingAssessedTax",
     "SalesRevenueNet",
     "SalesRevenueGoodsNet"
-  ]) || null;
+  ], filing) || null;
 }
 
 function instantFacts(facts, names, filing) {
@@ -336,7 +336,8 @@ function instantFacts(facts, names, filing) {
       const tag = tags[tagName];
       for (const unit of Object.keys(tag.units || {})) {
         for (const item of tag.units[unit] || []) {
-          if (item.start || item.val == null) continue;\n          if (filing && !matchesFiling(item, filing)) continue;
+          if (item.start || item.val == null) continue;
+          if (filing && !matchesFiling(item, filing)) continue;
 
           const value = Number(item.val);
           if (!Number.isFinite(value) || value <= 0) continue;
