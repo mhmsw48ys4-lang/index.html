@@ -646,50 +646,47 @@ function extractSecCurrentQuarterIncomeComponents(text) {
   const raw = String(text || "");
 
   // Pick the real Statement of Operations, not the table of contents or MD&A.
-  // The statement is the occurrence whose following text contains the
-  // three-month period header and an exact Sales row.
-  const titleRe = /(?:Condensed\\s+(?:Consolidated\\s+)?)?Statements\\s+of\\s+Operations(?:\\s+and\\s+Comprehensive\\s+(?:Loss|Income))?/gi;
+  const titleRe = /(?:Condensed\s+(?:Consolidated\s+)?)?Statements\s+of\s+Operations(?:\s+and\s+Comprehensive\s+(?:Loss|Income))?/gi;
   let m;
   let statement = null;
 
   while ((m = titleRe.exec(raw))) {
     const tail = raw.slice(m.index, m.index + 60000);
-    if (!/Three\\s+Months\\s+Ended/i.test(tail)) continue;
-    if (!/(?:^|\\n)\\s*Sales\\s*(?:\\||\\$|[0-9])/im.test(tail) && !/\\bSales\\s+\\|/i.test(tail)) continue;
+    if (!/Three\s+Months\s+Ended/i.test(tail)) continue;
+    if (!/(?:^|\n)\s*Sales\s*(?:\||\$|[0-9])/im.test(tail) && !/\bSales\s+\|/i.test(tail)) continue;
 
-    const stop = tail.search(/Condensed\\s+Statements\\s+of\\s+Stockholders|Condensed\\s+Statements\\s+of\\s+Cash\\s+Flows|Statements\\s+of\\s+Cash\\s+Flows|Notes\\s+to\\s+(?:Condensed\\s+)?Financial\\s+Statements/i);
+    const stop = tail.search(/Condensed\s+Statements\s+of\s+Stockholders|Condensed\s+Statements\s+of\s+Cash\s+Flows|Statements\s+of\s+Cash\s+Flows|Notes\s+to\s+(?:Condensed\s+)?Financial\s+Statements/i);
     statement = stop > 0 ? tail.slice(0, stop) : tail;
     break;
   }
 
   if (!statement) return null;
 
-  const lines = statement.split(/\\r?\\n/).map(x =>
-    String(x || "").replace(/\\|/g, " ").replace(/\\s+/g, " ").trim()
+  const lines = statement.split(/\r?\n/).map(x =>
+    String(x || "").replace(/\|/g, " ").replace(/\s+/g, " ").trim()
   ).filter(Boolean);
 
   const wanted = [
     { key: "sales", re: /^Sales$/i },
-    { key: "interest", re: /^Interest income(?:,\\s*net)?$/i },
+    { key: "interest", re: /^Interest income(?:,\s*net)?$/i },
     { key: "dividend", re: /^Dividend income$/i },
     { key: "conversion", re: /^Change in fair value of conversion option liability$/i },
     { key: "warrants", re: /^Change in fair value of warrants liabilities?$/i },
     { key: "fairValue", re: /^Change in fair value of .* liability$/i },
-    { key: "gain", re: /^Gain (?:on|from)\\b/i }
+    { key: "gain", re: /^Gain (?:on|from)\b/i }
   ];
 
   const components = [];
   const seen = new Set();
 
   for (const line of lines) {
-    // Remove a leading "$" column but keep the row label exact.
-    const normalized = line.replace(/^FEMASYS INC.\\s+/i, "").trim();
+    const normalized = line.replace(/^FEMASYS INC\.\s+/i, "").trim();
 
     for (const item of wanted) {
       if (!item.re.test(normalized)) continue;
 
       const rest = normalized.replace(item.re, "").trim();
-      const tokens = rest.match(/(?:—|–|\\$?\\s*\\(?[0-9][0-9,]*(?:\\.\\d+)?\\)?)/g) || [];
+      const tokens = rest.match(/(?:—|–|\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?)/g) || [];
       if (!tokens.length) break;
 
       const value = parseNumber(tokens[0]);
@@ -701,37 +698,32 @@ function extractSecCurrentQuarterIncomeComponents(text) {
     }
   }
 
-  // If HTML flattening placed several cells on one line, use exact label
-  // boundaries and the first number after each label. This still excludes
-  // "Sales and marketing" because the label is exact.
-  if (!components.some(x => x.key === "sales")) {
-    const rowPatterns = [
-      { key: "sales", re: /(?:^|\\n)\\s*Sales\\s*(?:\\||\\$)?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i },
-      { key: "interest", re: /(?:^|\\n)\\s*Interest income(?:,\\s*net)?\\s*(?:\\||\\$)?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i },
-      { key: "dividend", re: /(?:^|\\n)\\s*Dividend income\\s*(?:\\||\\$)?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i },
-      { key: "conversion", re: /(?:^|\\n)\\s*Change in fair value of conversion option liability\\s*(?:\\||\\$)?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i },
-      { key: "warrants", re: /(?:^|\\n)\\s*Change in fair value of warrants liabilities?\\s*(?:\\||\\$)?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i }
-    ];
+  // SEC HTML can flatten several table cells onto one line. Use exact row
+  // boundaries as a fallback; "Sales and marketing" can never match ^Sales$.
+  const rowPatterns = [
+    { key: "sales", re: /(?:^|\n)\s*Sales\s*(?:\||\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i },
+    { key: "interest", re: /(?:^|\n)\s*Interest income(?:,\s*net)?\s*(?:\||\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i },
+    { key: "dividend", re: /(?:^|\n)\s*Dividend income\s*(?:\||\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i },
+    { key: "conversion", re: /(?:^|\n)\s*Change in fair value of conversion option liability\s*(?:\||\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i },
+    { key: "warrants", re: /(?:^|\n)\s*Change in fair value of warrants liabilities?\s*(?:\||\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i }
+  ];
 
-    for (const item of rowPatterns) {
-      const hit = statement.match(item.re);
-      if (!hit) continue;
-      const value = parseNumber(hit[1]);
-      if (Number.isFinite(value) && value > 0 && !seen.has(value)) {
-        seen.add(value);
-        components.push({ key: item.key, value });
-      }
+  for (const item of rowPatterns) {
+    if (components.some(x => x.key === item.key)) continue;
+    const hit = statement.match(item.re);
+    if (!hit) continue;
+    const value = parseNumber(hit[1]);
+    if (Number.isFinite(value) && value > 0 && !seen.has(value)) {
+      seen.add(value);
+      components.push({ key: item.key, value });
     }
   }
 
   if (!components.length) return null;
 
-  const total = components.reduce((sum, x) => sum + x.value, 0);
-  const interest = components.find(x => x.key === "interest")?.value ?? null;
-
   return {
-    total,
-    interest,
+    total: components.reduce((sum, x) => sum + x.value, 0),
+    interest: components.find(x => x.key === "interest")?.value ?? null,
     components
   };
 }
@@ -748,7 +740,7 @@ function findProhibitedIncome(text, usgaap, filing) {
 
   const raw = String(text || "");
   const attributable = raw.match(
-    /Other income \\(expenses\\), net,[\\s\\S]{0,900}?is attributable to[\\s\\S]{0,500}?interest income(?: of)?\\s*\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i
+    /Other income \(expenses\), net,[\s\S]{0,900}?is attributable to[\s\S]{0,500}?interest income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i
   );
 
   if (attributable) {
@@ -764,7 +756,7 @@ function findProhibitedIncome(text, usgaap, filing) {
 
   const section = getOperationsSection(raw);
   const value = section
-    ? findLabeledFinancialValue(section, /interest income(?:,?\\s+net)?/i)
+    ? findLabeledFinancialValue(section, /interest income(?:,?\s+net)?/i)
     : null;
 
   return value != null
@@ -900,8 +892,8 @@ function extractCurrentQuarterPositiveIncome(text) {
 function findTotalIncome(text, usgaap, filing) {
   const parsed = extractSecCurrentQuarterIncomeComponents(text);
 
-  // This is the authoritative path for SEC 10-Q/10-K statements. Never let
-  // the later generic fallbacks replace a successfully parsed denominator.
+  // Authoritative path: once the current-quarter SEC statement is parsed,
+  // never allow a later generic fallback to replace its denominator.
   if (parsed?.total > 0) {
     return {
       value: parsed.total,
@@ -910,8 +902,8 @@ function findTotalIncome(text, usgaap, filing) {
     };
   }
 
-  // Preserve the existing generic fallbacks for issuers whose filing format
-  // does not expose a parseable Statement of Operations table.
+  // Fallback for filings whose SEC format does not expose a parseable
+  // Statement of Operations table.
   const raw = String(text || "");
   const ops = getOperationsSection(raw);
 
@@ -931,42 +923,6 @@ function findTotalIncome(text, usgaap, filing) {
       value: statementGross,
       source: "SEC current-quarter Statement of Operations"
     };
-  }
-
-  const reconciliation =
-    /Other income \\(expenses\\), net,[\\s\\S]{0,1200}?is attributable to([\\s\\S]{0,900}?)(?:,\\s*less\\b|\\bless\\b)/gi;
-
-  const matches = [];
-  let rm;
-  while ((rm = reconciliation.exec(raw))) {
-    if (/interest income/i.test(rm[1])) matches.push(rm[1]);
-  }
-
-  if (matches.length) {
-    const part = matches[matches.length - 1];
-    const positiveLabels = [
-      /interest income(?: of)?\\s*\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i,
-      /dividend income(?: of)?\\s*\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i,
-      /change in fair value of warrant liability(?: of)?\\s*\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i,
-      /change in fair value of derivative liability(?: of)?\\s*\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i
-    ];
-
-    const positive = [];
-    for (const re of positiveLabels) {
-      const m = part.match(re);
-      if (m) {
-        const v = parseNumber(m[1]);
-        if (Number.isFinite(v) && v > 0) positive.push(v);
-      }
-    }
-
-    const total = positive.reduce((sum, v) => sum + v, 0);
-    if (total > 0) {
-      return {
-        value: total,
-        source: "SEC MD&A — current-quarter gross positive income components"
-      };
-    }
   }
 
   return null;
