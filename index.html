@@ -1922,7 +1922,13 @@ async function autoScanSplits(){
     }
 
     const found=[];
-    const batchSize=10;
+    const errors=[];
+    let dataOk=0;
+    let noBase=0;
+
+    /* لا نرسل 10 طلبات Yahoo دفعة واحدة؛ ذلك قد يؤدي إلى 429
+       من Yahoo ويجعل النتيجة صفر رغم وجود أسهم. */
+    const batchSize=3;
 
     for(let i=0;i<symbols.length;i+=batchSize){
       const batch=symbols.slice(i,i+batchSize);
@@ -1934,10 +1940,15 @@ async function autoScanSplits(){
 
       const settled=await Promise.allSettled(batch.map(async symbol=>{
         const result=await getStock(symbol);
+        dataOk++;
+
         const rows=makeRows(result.data);
         const base=findAutoBase(rows);
 
-        if(!base) return null;
+        if(!base){
+          noBase++;
+          return null;
+        }
 
         const a=analyze(result);
         const price=Number(a?.latest?.close);
@@ -1948,8 +1959,6 @@ async function autoScanSplits(){
           price>7
         ) return null;
 
-        /* نستخدم نتيجة القاع التلقائي فقط هنا.
-           البحث اليدوي يبقى على شروطه الأصلية دون تغيير. */
         a.pivot=base.pivot;
         a.stability={
           count:base.count,
@@ -1960,11 +1969,13 @@ async function autoScanSplits(){
         return a;
       }));
 
-      for(const r of settled){
-        if(r.status==="fulfilled" && r.value){
-          found.push(r.value);
+      settled.forEach((r,index)=>{
+        if(r.status==="fulfilled"){
+          if(r.value) found.push(r.value);
+        }else{
+          errors.push(batch[index]+": "+(r.reason?.message||"فشل جلب البيانات"));
         }
-      }
+      });
     }
 
     found.sort((a,b)=>{
@@ -1974,8 +1985,24 @@ async function autoScanSplits(){
     });
 
     if(!found.length){
-      status.textContent="انتهى المسح — لم يظهر سهم ثبت عند القاع 3 أيام أو أكثر ضمن $1–$7.";
-      results.innerHTML='<div class="empty">لم يظهر سهم يحقق: هبوط + قاع + ثبات 3 أيام أو أكثر.</div>';
+      status.textContent=
+        "انتهى المسح — فُحصت "+symbols.length+
+        " أسهم، وصلت بيانات "+dataOk+
+        "، ولم يظهر قاع مكتمل في "+noBase+
+        " سهم.";
+
+      let html='<div class="empty">لم يظهر سهم يحقق: هبوط + قاع + ثبات 3 أيام أو أكثر.</div>';
+
+      if(errors.length){
+        html+=
+          '<div class="error">تعذر جلب بيانات '+
+          errors.length+
+          ' سهم. أول الأخطاء:<br>'+
+          escapeHtml(errors.slice(0,8).join("\n"))+
+          '</div>';
+      }
+
+      results.innerHTML=html;
       return;
     }
 
