@@ -75,12 +75,21 @@ exports.handler = async (event) => {
 
     const liveMarket = await getCurrentMarketData(symbol);
     const currentPrice = liveMarket?.price ?? await getCurrentPrice(symbol);
-    const shares = liveMarket?.shares ?? null;
 
-    // AAOIFI denominator: use a live market-cap field from the market-data
-    // source. Never rebuild today's market cap from an old SEC share count.
-    // This is especially important after reverse splits and new share issues.
-    const marketCap = liveMarket?.marketCap ?? null;
+    let shares = liveMarket?.shares ?? null;
+    if (!(Number.isFinite(shares) && shares > 0)) {
+      shares = findSharesOutstanding(filingText, usgaap, dei, filing);
+    }
+
+    // AAOIFI denominator: prefer a live market-cap field. If the quote
+    // provider does not return market cap, calculate it from the current
+    // price and the latest share-count disclosure in the selected filing.
+    let marketCap = liveMarket?.marketCap ?? null;
+    if (!(Number.isFinite(marketCap) && marketCap > 0) &&
+        Number.isFinite(currentPrice) && currentPrice > 0 &&
+        Number.isFinite(shares) && shares > 0) {
+      marketCap = currentPrice * shares;
+    }
 
     const sic = String(submissions.sic || "");
     const sicDescription = String(submissions.sicDescription || "");
@@ -395,14 +404,23 @@ function findSharesOutstanding(text, usgaap, dei, filing) {
   if (fact?.value > 1000) return fact.value;
 
   const patterns = [
+    /as of [A-Z][a-z]+\s+\d{1,2},\s+20\d{2}[^\n]{0,220}?there were\s+([0-9][0-9,]+)\s+shares?[^\n]{0,80}?outstanding/i,
+    /as of [A-Z][a-z]+\s+\d{1,2},\s+20\d{2}[^\n]{0,220}?([0-9][0-9,]+)\s+shares?[^\n]{0,80}?outstanding/i,
+    /there were\s+([0-9][0-9,]+)\s+(?:shares?|shares? of (?:the )?(?:registrant's|registrant) common stock)[^\n]{0,80}?outstanding/i,
     /([0-9][0-9,]+)\s+Class\s+A[^\n]{0,100}?and\s+([0-9][0-9,]+)\s+Class\s+B[^\n]{0,100}?issued and outstanding/i,
     /as of [A-Z][a-z]+\s+\d{1,2},\s+20\d{2}[^\n]{0,120}?([0-9][0-9,]+)\s+Class\s+A[^\n]{0,100}?([0-9][0-9,]+)\s+Class\s+B/i
   ];
+
   for (const re of patterns) {
     const m = text.match(re);
     if (!m) continue;
-    const a = parseNumber(m[1]), b = parseNumber(m[2]);
-    if (a > 1000 && b >= 0) return a + b;
+    if (m.length === 2) {
+      const n = parseNumber(m[1]);
+      if (n > 1000) return n;
+    } else {
+      const a = parseNumber(m[1]), b = parseNumber(m[2]);
+      if (a > 1000 && b >= 0) return a + b;
+    }
   }
   return null;
 }
@@ -441,7 +459,12 @@ function findInterestBearingDebt(text, usgaap, filing) {
   for (const line of lines) {
     if (!rowRegex.test(line)) continue;
     const nums = numbersFromLine(line);
-    if (nums.length) matched.push({ label: line.slice(0, 180), value: Math.abs(nums[0]) });
+    if (nums.length) {
+      matched.push({
+        label: line.slice(0, 180),
+        value: Math.abs(nums[0]) * inferLineScale(lines, lines.indexOf(line))
+      });
+    }
   }
 
   if (matched.length) {
@@ -466,12 +489,13 @@ function findInterestTakingDeposits(text, usgaap, filing) {
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
   const regex = /interest[- ]bearing deposits?|interest[- ]taking deposits?|deposits? (?:that|which) (?:earn|take) interest/i;
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (!regex.test(line)) continue;
-    const nums = numbersFromLine(line);
-    if (nums.length) {
+    const value = firstFinancialValueAfterLabel(line, regex);
+    if (value != null) {
       return {
-        value: nums[0],
+        value: Math.abs(value) * inferLineScale(lines, i),
         source: line.slice(0, 220)
       };
     }
@@ -484,11 +508,11 @@ function findInterestTakingDeposits(text, usgaap, filing) {
   ], usgaap, {}, filing);
 
   if (fact?.value != null) {
-    return { value: fact.value, source: "SEC XBRL" };
+    return { value: Math.abs(fact.value), source: "SEC XBRL" };
   }
 
-  // No explicit interest-taking deposit disclosed. Ordinary cash is not counted,
-  // but absence of disclosure is not the same as proving the amount is zero.
+  // Ordinary cash is NOT treated as an interest-taking deposit merely because
+  // it appears on the balance sheet. No explicit disclosure = insufficient.
   return null;
 }
 
@@ -496,14 +520,13 @@ function findProhibitedIncome(text, usgaap, filing) {
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
   const regex = /(?:^|\s)(?:interest income|interest revenue|income from interest)(?:\s|$)/i;
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (!regex.test(line) || /interest expense|interest expenses|net interest income \(expense\)/i.test(line)) continue;
-    const nums = numbersFromLine(line);
-    if (nums.length) {
-      // The first number on the income-statement row is the latest/current
-      // period shown (for a 10-Q, the current quarter).
+    const value = firstFinancialValueAfterLabel(line, regex);
+    if (value != null) {
       return {
-        value: Math.abs(nums[0]),
+        value: Math.abs(value),
         label: "Interest income",
         source: line.slice(0, 220)
       };
@@ -531,44 +554,45 @@ function findProhibitedIncome(text, usgaap, filing) {
 function findTotalIncome(text, usgaap, filing) {
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
 
-  // AAOIFI 3/4/4 uses "total income", not net profit. For an income
-  // statement with separate revenue and other-income lines, build the
-  // denominator from the positive income components of the current period.
-  // Do not let a zero revenue line make the denominator disappear.
-  const revenueRegex = /^(?:revenue|revenues|total revenue|net sales|sales revenue|total income|operating revenue)\b/i;
+  // Use the latest/current period column from the income statement. A dash is
+  // a real zero and must not be discarded, otherwise the previous-year column
+  // can accidentally become the "current" revenue.
+  const revenueRegex = /^(?:revenue|revenues|revenue,? net|total revenue|net sales|sales revenue|total income|operating revenue)\b/i;
+  const interestRegex = /^(?:interest income|interest revenue|income from interest)\b/i;
   let revenue = null;
   let interestIncome = null;
   const otherPositive = [];
 
-  for (const line of lines) {
-    const nums = numbersFromLine(line);
-    if (!nums.length) continue;
-    const v = Math.abs(nums[0]);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
 
-    if (revenue == null && revenueRegex.test(line) && v >= 0) {
-      revenue = v;
+    if (revenue == null && revenueRegex.test(line)) {
+      const v = firstFinancialValueAfterLabel(line, revenueRegex);
+      if (v != null) revenue = v;
       continue;
     }
 
-    if (/(?:^|\s)interest income(?:\s|$)/i.test(line) &&
+    if (interestIncome == null && interestRegex.test(line) &&
         !/interest expense|interest expenses/i.test(line)) {
-      if (interestIncome == null) interestIncome = v;
+      const v = firstFinancialValueAfterLabel(line, interestRegex);
+      if (v != null) interestIncome = Math.abs(v);
       continue;
     }
 
-    // Explicit positive "other income" / gain rows can contribute to total
-    // income. Expenses and losses are not added to the gross-income denominator.
-    if (/(?:other income|gain on|gain from|income from)/i.test(line) &&
-        !/expense|loss|net loss/i.test(line) && nums[0] > 0) {
-      otherPositive.push(nums[0]);
+    if (/(?:^|\s)(?:other income|gain on|gain from|income from)\b/i.test(line) &&
+        !/expense|loss|net loss/i.test(line)) {
+      const v = firstFinancialValueAfterLabel(line, /^(?:other income|gain on|gain from|income from)/i);
+      if (v != null && v > 0) otherPositive.push(v);
     }
   }
 
-  const total = (revenue ?? 0) + (interestIncome ?? 0) + otherPositive.reduce((a, x) => a + x, 0);
+  const components = [revenue, interestIncome, ...otherPositive].filter(v => v != null);
+  const total = components.reduce((sum, v) => sum + Math.abs(v), 0);
+
   if (total > 0) {
     return {
       value: total,
-      source: "SEC income statement — positive income components"
+      source: "SEC income statement — current-period positive income components"
     };
   }
 
@@ -583,6 +607,29 @@ function findTotalIncome(text, usgaap, filing) {
   return fact?.value != null && Math.abs(fact.value) > 0
     ? { value: Math.abs(fact.value), source: "SEC XBRL" }
     : null;
+}
+
+function firstFinancialValueAfterLabel(line, labelRegex) {
+  const rest = String(line || "").replace(labelRegex, " ");
+  // Preserve em-dash as zero. Ignore dates/years that can appear later.
+  const tokenRe = /(?:—|–|-|\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?)/g;
+  const tokens = rest.match(tokenRe) || [];
+  for (const raw of tokens) {
+    const t = String(raw).trim();
+    if (t === "—" || t === "–" || t === "-") return 0;
+    const n = parseNumber(t);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function inferLineScale(lines, index) {
+  const start = Math.max(0, index - 40);
+  for (let i = index; i >= start; i--) {
+    if (/\bin thousands\b|\bin thousands,|\(in thousands\b/i.test(lines[i])) return 1000;
+    if (/\bin millions\b|\(in millions\b/i.test(lines[i])) return 1000000;
+  }
+  return 1;
 }
 
 function latestFactFromFacts(names, primaryFacts, secondaryFacts, filing) {
@@ -667,10 +714,17 @@ async function getCurrentMarketData(symbol) {
     const marketCap = Number(q.marketCap);
     const shares = Number(q.sharesOutstanding);
 
+    const safePrice = Number.isFinite(price) && price > 0 ? price : null;
+    const safeShares = Number.isFinite(shares) && shares > 0 ? shares : null;
+    const safeMarketCap =
+      Number.isFinite(marketCap) && marketCap > 0
+        ? marketCap
+        : (safePrice && safeShares ? safePrice * safeShares : null);
+
     return {
-      price: Number.isFinite(price) && price > 0 ? price : null,
-      marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
-      shares: Number.isFinite(shares) && shares > 0 ? shares : null,
+      price: safePrice,
+      marketCap: safeMarketCap,
+      shares: safeShares,
       source: "Yahoo Finance"
     };
   } catch (_) {
