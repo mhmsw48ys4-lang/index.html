@@ -177,7 +177,6 @@ exports.handler = async (event) => {
 
     const complete =
       marketCap != null &&
-      shares != null &&
       checks.debt.pass !== null &&
       checks.interestTakingDeposits.pass !== null &&
       checks.prohibitedIncome.pass !== null;
@@ -373,8 +372,17 @@ function findSharesOutstanding(text, usgaap, dei, filing) {
 }
 
 function findInterestBearingDebt(text, usgaap, filing) {
-  const currentConvertible = extractLabeledAmount(text, /(?:^|\n)\s*Convertible debt\s+\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i);
-  const bankLoan = extractLabeledAmount(text, /(?:^|\n)\s*Long-term bank loan\s+\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i);
+  // First read clearly labelled interest-bearing debt rows. The SEC HTML
+  // tables do not always preserve line starts, so allow table separators/text
+  // between the label and the current-period amount.
+  const currentConvertible = extractLabeledAmount(
+    text,
+    /Convertible debt[\\s\\S]{0,220}?\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i
+  );
+  const bankLoan = extractLabeledAmount(
+    text,
+    /Long-term bank loan[\\s\\S]{0,220}?\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i
+  );
 
   const explicit = [];
   if (currentConvertible != null) explicit.push({ label: "Convertible debt", value: currentConvertible });
@@ -387,28 +395,25 @@ function findInterestBearingDebt(text, usgaap, filing) {
     };
   }
 
-  const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const debtRegex = /(?:convertible debt|convertible note|bank borrowings|bank borrowing|short[- ]term borrowings|long[- ]term borrowings|long[- ]term bank loan|borrowings[- ]current|borrowings[- ]non[- ]current|interest[- ]bearing (?:debt|loans|borrowings)|loans payable)/i;
-  const matched = [];
-  for (const line of lines) {
-    if (!debtRegex.test(line)) continue;
-    const nums = numbersFromLine(line);
-    if (nums.length) matched.push({ label: line.slice(0, 180), value: nums[0] });
-  }
-  if (matched.length) {
-    const unique = [];
-    for (const item of matched) {
-      if (!unique.some(x => Math.abs(x.value - item.value) < 0.01 && x.label === item.label)) unique.push(item);
-    }
-    const sum = unique.reduce((a, x) => a + x.value, 0);
-    if (sum > 0) return { value: sum, source: unique.map(x => x.label).slice(0, 6).join(" | ") };
-  }
-
   const fact = latestFactFromFacts([
     "LongTermDebtCurrent","LongTermDebtNoncurrent","LongTermDebt","ShortTermBorrowings",
     "ShortTermDebt","LongTermBorrowingsCurrent","LongTermBorrowingsNoncurrent"
   ], usgaap, {}, filing);
-  return fact?.value != null ? { value: fact.value, source: "SEC XBRL" } : null;
+  if (fact?.value != null) return { value: fact.value, source: "SEC XBRL" };
+
+  // If the balance sheet contains no borrowing/debt item and the cash-flow
+  // statement reports no cash paid for interest, treat interest-bearing debt
+  // as zero. This is different from treating ordinary cash as an interest
+  // deposit; it is based on the issuer's own financial statements.
+  const hasDebtLabel = /(?:convertible debt|notes? payable|bank loan|bank borrowings|borrowings|interest[- ]bearing debt|loans payable|term loan|senior notes?)/i.test(text);
+  const noInterestPaid = /cash paid for interest[\\s\\S]{0,120}?(?:\\$?\\s*[—–-]|0(?:\\.0+)?)/i.test(text);
+  const hasBalanceSheet = /condensed consolidated balance sheets|consolidated balance sheets/i.test(text);
+
+  if (hasBalanceSheet && !hasDebtLabel && noInterestPaid) {
+    return { value: 0, source: "لا يوجد دين قائم على الفائدة ظاهر في القوائم المالية" };
+  }
+
+  return null;
 }
 
 function extractLabeledAmount(text, regex) {
@@ -450,15 +455,14 @@ function findInterestTakingDeposits(text, usgaap, filing) {
 
 function findProhibitedIncome(text, usgaap, filing) {
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const regex = /(?:interest income|interest revenue|income from interest)/i;
+  const regex = /(?:^|\\s)(?:interest income|interest revenue|income from interest)(?:\\s|$)/i;
 
   for (const line of lines) {
-    // Do not treat "interest expense", "interest expenses, net", or
-    // "net interest income (expense)" as prohibited income. We need an
-    // explicitly reported positive interest-income component.
-    if (!regex.test(line) || /interest expense|interest expenses|net interest income \(expense\)/i.test(line)) continue;
+    if (!regex.test(line) || /interest expense|interest expenses|net interest income \\(expense\\)/i.test(line)) continue;
     const nums = numbersFromLine(line);
     if (nums.length) {
+      // The first number on the income-statement row is the latest/current
+      // period shown (for a 10-Q, the current quarter).
       return {
         value: Math.abs(nums[0]),
         label: "Interest income",
@@ -488,19 +492,45 @@ function findProhibitedIncome(text, usgaap, filing) {
 function findTotalIncome(text, usgaap, filing) {
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
 
-  // Prefer a reported revenue/total income line from the latest financial
-  // statement. The first number is the current-period amount.
-  const regex = /^(?:revenue|revenues|total revenue|net sales|sales revenue|total income|operating revenue)\b/i;
+  // AAOIFI 3/4/4 uses "total income", not net profit. For an income
+  // statement with separate revenue and other-income lines, build the
+  // denominator from the positive income components of the current period.
+  // Do not let a zero revenue line make the denominator disappear.
+  const revenueRegex = /^(?:revenue|revenues|total revenue|net sales|sales revenue|total income|operating revenue)\\b/i;
+  let revenue = null;
+  let interestIncome = null;
+  const otherPositive = [];
 
   for (const line of lines) {
-    if (!regex.test(line)) continue;
     const nums = numbersFromLine(line);
-    if (nums.length && nums[0] > 0) {
-      return {
-        value: nums[0],
-        source: line.slice(0, 220)
-      };
+    if (!nums.length) continue;
+    const v = Math.abs(nums[0]);
+
+    if (revenue == null && revenueRegex.test(line) && v >= 0) {
+      revenue = v;
+      continue;
     }
+
+    if (/(?:^|\\s)interest income(?:\\s|$)/i.test(line) &&
+        !/interest expense|interest expenses/i.test(line)) {
+      if (interestIncome == null) interestIncome = v;
+      continue;
+    }
+
+    // Explicit positive "other income" / gain rows can contribute to total
+    // income. Expenses and losses are not added to the gross-income denominator.
+    if (/(?:other income|gain on|gain from|income from)/i.test(line) &&
+        !/expense|loss|net loss/i.test(line) && nums[0] > 0) {
+      otherPositive.push(nums[0]);
+    }
+  }
+
+  const total = (revenue ?? 0) + (interestIncome ?? 0) + otherPositive.reduce((a, x) => a + x, 0);
+  if (total > 0) {
+    return {
+      value: total,
+      source: "SEC income statement — positive income components"
+    };
   }
 
   const fact = latestFactFromFacts([
@@ -511,7 +541,7 @@ function findTotalIncome(text, usgaap, filing) {
     "SalesRevenueServicesNet"
   ], usgaap, {}, filing);
 
-  return fact?.value != null
+  return fact?.value != null && Math.abs(fact.value) > 0
     ? { value: Math.abs(fact.value), source: "SEC XBRL" }
     : null;
 }
