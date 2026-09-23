@@ -775,6 +775,14 @@ function findTotalIncome(text, usgaap, filing) {
     total = interestForFloor;
   }
 
+  // The prohibited component is necessarily part of total income. If SEC
+  // table flattening produces a denominator smaller than that component,
+  // prevent an impossible ratio above 100%.
+  const prohibitedFloor = findProhibitedIncome(raw, usgaap, filing);
+  if (prohibitedFloor?.value != null && prohibitedFloor.value > total) {
+    total = prohibitedFloor.value;
+  }
+
   return total > 0
     ? {
         value: total,
