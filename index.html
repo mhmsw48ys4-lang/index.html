@@ -415,7 +415,7 @@ placeholder="اكتب رمز السهم مثل NTCL">
 </div>
 
 <div class="scannerDesc">
-المسح التلقائي يبحث عن الأسهم بين $1 و $10 ثم يطبق شروط الارتكاز الأصلية كاملة. إذا ظهر سهم مناسب، انقله للبحث اليدوي لتحليله بالتفصيل.
+المسح التلقائي يبحث عن الأسهم بين $1 و $7 التي هبطت ثم ثبتت عند قاعها 3–4 أيام. بعدها تفرزها يدوياً بشروطك الأصلية.
 </div>
 
 <button
@@ -1860,13 +1860,13 @@ async function autoScanSplits(){
   const status=document.getElementById("scanStatus");
   const results=document.getElementById("scanResults");
   results.innerHTML="";
-  status.textContent="جاري مسح الأسهم والبحث عن أسهم تحقق شروط الارتكاز...";
+  status.textContent="جاري مسح الأسهم $1–$7 والبحث عن هبوط ثبت عند القاع 3–4 أيام...";
 
   try{
     const response=await fetch("/.netlify/functions/pivot",{cache:"no-store"});
     if(!response.ok){
       const err=await response.json().catch(()=>({}));
-      throw new Error(err.error||"تعذر جلب قائمة الأسهم من خادم الموقع");
+      throw new Error(err.error||"تعذر جلب قائمة الأسهم المرشحة");
     }
 
     const json=await response.json();
@@ -1884,7 +1884,7 @@ async function autoScanSplits(){
 
     for(let i=0;i<symbols.length;i+=batchSize){
       const batch=symbols.slice(i,i+batchSize);
-      status.textContent="جاري تحليل الارتكاز "+Math.min(i+batch.length,symbols.length)+" من "+symbols.length+"...";
+      status.textContent="جاري فحص الثبات عند القاع "+Math.min(i+batch.length,symbols.length)+" من "+symbols.length+"...";
 
       const settled=await Promise.allSettled(batch.map(async symbol=>{
         const result=await getStock(symbol);
@@ -1892,41 +1892,43 @@ async function autoScanSplits(){
       }));
 
       for(const r of settled){
-        if(r.status==="fulfilled"){
-          const a=r.value;
-          if(
-            a &&
-            a.pivot &&
-            a.stability &&
-            a.stability.complete &&
-            a.latest &&
-            Number(a.latest.close)>=1 &&
-            Number(a.latest.close)<=10 &&
-            Number(a.rsi)>=23 &&
-            Number(a.rsi)<=35 &&
-            Number(a.macd?.histogram)>0 &&
-            Number(a.latest.close)>Number(a.ema20) &&
-            Number(a.latest.close)>Number(a.ema30) &&
-            Number(a.latest.close)>Number(a.ema50) &&
-            Number(a.rvol)>=1.2
-          ){
-            found.push(a);
-          }
-        }else{
-          errors.push(String(r.reason?.message||r.reason||"خطأ"));
+        if(r.status!=="fulfilled") continue;
+
+        const a=r.value;
+        const price=Number(a?.latest?.close);
+        const stableDays=Number(a?.stability?.count||0);
+
+        // المسح التلقائي هنا مخصص لاكتشاف:
+        // هبوط -> قاع محلي -> عدم كسر القاع لمدة 3 أو 4 أيام.
+        // لا نفرض RSI/MACD/EMA/RVOL هنا؛ المستخدم يفرزها يدوياً بعد ذلك.
+        if(
+          a &&
+          a.pivot &&
+          a.stability &&
+          stableDays>=3 &&
+          stableDays<=4 &&
+          Number.isFinite(price) &&
+          price>=1 &&
+          price<=7
+        ){
+          found.push(a);
         }
       }
     }
 
-    found.sort((a,b)=>(b.rvol||0)-(a.rvol||0));
+    found.sort((a,b)=>{
+      const sd=(b.stability?.count||0)-(a.stability?.count||0);
+      if(sd!==0) return sd;
+      return Number(a.pivot?.price||0)-Number(b.pivot?.price||0);
+    });
 
     if(!found.length){
-      status.textContent="انتهى المسح — لم يظهر سهم يحقق شروط الارتكاز كاملة ضمن الأسهم المفحوصة.";
-      results.innerHTML='<div class="empty">لم يظهر سهم يحقق شروط الارتكاز كاملة حالياً.</div>';
+      status.textContent="انتهى المسح — لم يظهر سهم ثبت عند القاع 3 أو 4 أيام ضمن $1–$7.";
+      results.innerHTML='<div class="empty">لم يظهر سهم يحقق: هبوط + قاع + ثبات 3 أو 4 أيام.</div>';
       return;
     }
 
-    status.innerHTML="تم المسح ✓ — وجدنا "+found.length+" سهم يحقق شروط الارتكاز.";
+    status.innerHTML="تم المسح ✓ — وجدنا "+found.length+" سهم عنده قاع ثابت 3–4 أيام.";
     results.innerHTML=found.map(renderPivotAutoCard).join("");
   }catch(error){
     status.innerHTML='<div class="error">تعذر تشغيل مسح الارتكاز: '+escapeHtml(error.message)+'</div>';
@@ -1935,18 +1937,20 @@ async function autoScanSplits(){
 
 function renderPivotAutoCard(a){
   const symbol=escapeHtml(a.symbol);
+  const days=Number(a.stability?.count||0);
   return `
 <div class="scanCard">
   <div class="scanHead">
     <div class="scanSymbol">${symbol}</div>
-    <div class="scanDays">ارتكاز مكتمل ✓</div>
+    <div class="scanDays">ثبات ${days} أيام ✓</div>
   </div>
   <div class="scanGrid">
     <div class="scanItem"><div class="scanLabel">السعر</div><div class="scanValue">${money(a.latest.close)}</div></div>
-    <div class="scanItem"><div class="scanLabel">RSI14</div><div class="scanValue">${Number(a.rsi).toFixed(1)}</div></div>
-    <div class="scanItem"><div class="scanLabel">RVOL</div><div class="scanValue">${Number(a.rvol).toFixed(2)}</div></div>
-    <div class="scanItem"><div class="scanLabel">MACD</div><div class="scanValue">${Number(a.macd?.histogram||0).toFixed(4)}</div></div>
-    <div class="scanItem"><div class="scanLabel">الثبات</div><div class="scanValue">4 أيام ✓</div></div>
+    <div class="scanItem"><div class="scanLabel">قاع الارتكاز</div><div class="scanValue">${money(a.pivot.price)}</div></div>
+    <div class="scanItem"><div class="scanLabel">تاريخ القاع</div><div class="scanValue">${dateText(a.pivot.date)}</div></div>
+    <div class="scanItem"><div class="scanLabel">الثبات</div><div class="scanValue">${days} أيام ✓</div></div>
+    <div class="scanItem"><div class="scanLabel">RSI14</div><div class="scanValue">${a.rsi!=null?Number(a.rsi).toFixed(1):"-"}</div></div>
+    <div class="scanItem"><div class="scanLabel">RVOL</div><div class="scanValue">${a.rvol!=null?Number(a.rvol).toFixed(2):"-"}</div></div>
   </div>
   <button class="scanAction" onclick="moveSplitToManual('${symbol}')">
     وضع ${symbol} في البحث اليدوي
