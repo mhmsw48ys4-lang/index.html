@@ -224,7 +224,8 @@ async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
 
   const candidates = [];
 
-  // Regular financial reports.
+  // Prefer regular financial reports. Domestic issuers such as CRIS should
+  // never make the function download a long series of 6-K submissions.
   for (let i = 0; i < forms.length; i++) {
     if (!["10-Q", "10-K", "20-F", "40-F"].includes(forms[i])) continue;
     candidates.push({
@@ -238,37 +239,61 @@ async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
     });
   }
 
-  // Foreign private issuers: inspect recent 6-K submissions and choose the
-  // newest one that actually contains financial statements.
-  for (let i = 0; i < Math.min(forms.length, 12); i++) {
+  // If a normal quarterly/annual filing exists, use the newest one.
+  // This avoids unnecessary SEC downloads and Netlify timeouts.
+  if (candidates.length) {
+    candidates.sort((a,b) =>
+      String(b.financialPeriod || b.reportDate || b.filingDate || "")
+        .localeCompare(String(a.financialPeriod || a.reportDate || a.filingDate || ""))
+    );
+    return candidates[0];
+  }
+
+  // Foreign issuers without 10-Q/10-K may put the financial statements in 6-K.
+  // Only inspect the newest 6-K submissions, in parallel, to keep execution fast.
+  const sixKs = [];
+  for (let i = 0; i < forms.length && sixKs.length < 6; i++) {
     if (forms[i] !== "6-K") continue;
     const acc = String(accessions[i] || "");
     if (!acc) continue;
+    sixKs.push({
+      acc,
+      primaryDocument: primaryDocuments[i],
+      filingDate: filingDates[i],
+      reportDate: reportDates[i],
+      primaryDescription: primaryDescriptions[i] || ""
+    });
+  }
 
+  const found = await Promise.all(sixKs.map(async item => {
     const url =
       "https://www.sec.gov/Archives/edgar/data/" +
-      String(Number(cik)) + "/" + acc.replace(/-/g, "") + "/" + acc + ".txt";
+      String(Number(cik)) + "/" + item.acc.replace(/-/g, "") + "/" + item.acc + ".txt";
 
     try {
       const plain = cleanText(await fetchText(url, secHeaders));
       const financial =
         /condensed consolidated (?:balance sheets|statements of operations)/i.test(plain) ||
-        /financial statements/i.test(plain) && /revenues?/i.test(plain) && /total liabilities/i.test(plain);
+        (/financial statements/i.test(plain) && /revenues?/i.test(plain) && /total liabilities/i.test(plain));
 
-      if (!financial) continue;
+      if (!financial) return null;
 
       const period = extractLatestFinancialPeriod(plain);
-      candidates.push({
+      return {
         form: "6-K",
-        accession: acc,
-        primaryDocument: primaryDocuments[i],
-        filingDate: filingDates[i],
-        reportDate: period || reportDates[i] || filingDates[i],
-        primaryDescription: primaryDescriptions[i] || "",
-        financialPeriod: period || reportDates[i] || filingDates[i]
-      });
-    } catch (_) {}
-  }
+        accession: item.acc,
+        primaryDocument: item.primaryDocument,
+        filingDate: item.filingDate,
+        reportDate: period || item.reportDate || item.filingDate,
+        primaryDescription: item.primaryDescription,
+        financialPeriod: period || item.reportDate || item.filingDate
+      };
+    } catch (_) {
+      return null;
+    }
+  }));
+
+  for (const item of found) if (item) candidates.push(item);
 
   candidates.sort((a,b) => {
     const da = String(a.financialPeriod || a.reportDate || a.filingDate || "");
@@ -279,7 +304,6 @@ async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
 
   return candidates[0] || null;
 }
-
 function extractLatestFinancialPeriod(text) {
   const dates = [];
   const re = /(?:as of|ended|ending|year ended|six months ended|three months ended|nine months ended)\s+(?:the\s+)?([A-Z][a-z]+\s+\d{1,2},\s+20\d{2})/gi;
