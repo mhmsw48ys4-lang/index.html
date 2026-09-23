@@ -1831,7 +1831,7 @@ async function fetchSplitCalendar(){
     throw new Error("تعذر جلب قائمة التقسيمات من خادم الموقع");
 
   const json=await response.json();
-  const rows=json?.data?.rows||[];
+  const rows=json?.events||[];
 
   return rows.map(x=>{
     const symbol=String(
