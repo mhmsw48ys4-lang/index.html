@@ -646,6 +646,7 @@ function extractStatementAmount(text, labelPattern) {
 
 
 function extractSecCurrentQuarterIncomeComponents(text) {
+  // robust parser
   const raw = String(text || "");
   const lines = raw.split(/\r?\n/).map(normalizeLine).filter(Boolean);
 
