@@ -647,17 +647,47 @@ function extractStatementAmount(text, labelPattern) {
 
 function extractSecCurrentQuarterIncomeComponents(text) {
   const raw = String(text || "");
-  const lines = raw.split(/\r?\n/).map(normalizeLine).filter(Boolean);
 
-  // Parse the current-quarter value directly from financial-statement rows.
-  // SEC HTML can flatten table cells differently between issuers, so do not
-  // depend on a specific number of "|" cells or on the location of the
-  // Statement of Operations heading.
-  const firstValueAfter = (line, labelRegex) => {
-    const m = line.match(labelRegex);
+  // Build the actual Statement of Operations section from the cleaned SEC
+  // filing. SEC filings repeat the statement title in the table of contents
+  // and in notes, so choose the occurrence that contains BOTH Sales and
+  // Interest income in the same bounded section.
+  const lines = raw.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  const titleRe = /statements of operations(?: and comprehensive (?:loss|income))?/i;
+  let section = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!titleRe.test(lines[i])) continue;
+
+    const window = lines.slice(i, Math.min(lines.length, i + 180));
+    const hasSales = window.some(x => /^Sales\b/i.test(x) && !/^Sales (?:and|&)/i.test(x));
+    const hasInterest = window.some(x => /^Interest income(?:,\s*net)?\b/i.test(x));
+    if (!hasSales || !hasInterest) continue;
+
+    const endIndex = window.findIndex((x, n) =>
+      n > 5 && /^(?:FEMASYS INC\.\s+)?(?:Condensed )?(?:Statements of Stockholders|Statements of Cash Flows|Notes to Financial Statements)\b/i.test(x)
+    );
+
+    section = window.slice(0, endIndex > 0 ? endIndex : window.length);
+    break;
+  }
+
+  // If the title is formatted differently, use the already-tested SEC
+  // section helper as a fallback.
+  if (!section) {
+    const fallback = getPrimaryOperationsStatementSection(raw);
+    if (fallback) section = fallback.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  }
+
+  if (!section) return null;
+
+  const firstNumberAfter = (line, labelRe) => {
+    const m = String(line || "").match(labelRe);
     if (!m) return null;
-    const tail = line.slice(m.index + m[0].length);
+
+    const tail = String(line).slice(m.index + m[0].length);
     const tokens = tail.match(/(?:—|–|\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?)/g) || [];
+
     for (const token of tokens) {
       const t = String(token).trim();
       if (t === "—" || t === "–") return 0;
@@ -667,20 +697,17 @@ function extractSecCurrentQuarterIncomeComponents(text) {
     return null;
   };
 
-  const findRow = (labelRegex, excludeRegex = null) => {
-    for (const line of lines) {
-      if (excludeRegex && excludeRegex.test(line)) continue;
-      if (!labelRegex.test(line)) continue;
-      const value = firstValueAfter(line, labelRegex);
+  const findRow = (labelRe, excludeRe = null) => {
+    for (const line of section) {
+      if (excludeRe && excludeRe.test(line)) continue;
+      if (!labelRe.test(line)) continue;
+      const value = firstNumberAfter(line, labelRe);
       if (value != null) return value;
     }
     return null;
   };
 
-  // Require the actual financial rows. The parser is intentionally global
-  // over the cleaned filing text because the row labels themselves are much
-  // more reliable than the position of the Statement of Operations heading.
-  const sales = findRow(/^Sales\b/i, /^(?:Sales and marketing|Sales & marketing)\b/i);
+  const sales = findRow(/^Sales\b/i, /^Sales (?:and|&)\s*(?:marketing|sales)/i);
   const interest = findRow(/^Interest income(?:,\s*net)?\b/i);
   const dividend = findRow(/^Dividend income\b/i);
   const conversion = findRow(/^Change in fair value of conversion option liability\b/i);
@@ -699,18 +726,16 @@ function extractSecCurrentQuarterIncomeComponents(text) {
   add("conversion", conversion);
   add("warrants", warrants);
 
-  const foundInterest = components.find(x => x.key === "interest")?.value ?? null;
   const foundSales = components.find(x => x.key === "sales")?.value ?? null;
+  const foundInterest = components.find(x => x.key === "interest")?.value ?? null;
 
-  if (foundSales != null && foundInterest != null) {
-    return {
-      total: components.reduce((sum, x) => sum + x.value, 0),
-      interest: foundInterest,
-      components
-    };
-  }
+  if (foundSales == null || foundInterest == null) return null;
 
-  return null;
+  return {
+    total: components.reduce((sum, x) => sum + x.value, 0),
+    interest: foundInterest,
+    components
+  };
 }
 function findProhibitedIncome(text, usgaap, filing) {
   const parsed = extractSecCurrentQuarterIncomeComponents(text);
