@@ -250,7 +250,7 @@ async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
     const doc = String(primaryDocuments[i] || "");
     if (!acc) continue;
 
-    const m = doc.match(/(20\\d{2})(\\d{2})(\\d{2})/);
+    const m = doc.match(/(20\d{2})(\d{2})(\d{2})/);
     if (m) {
       sixKs.push({
         acc,
@@ -413,11 +413,11 @@ function findInterestBearingDebt(text, usgaap, filing) {
   // authoritative current-period amount.
   const convertible = extractLabeledAmount(
     text,
-    /Convertible debt[\\s\\S]{0,120}?\\$?\\s*([0-9][0-9,]+(?:\\.\\d+)?)/i
+    /Convertible debt[\s\S]{0,120}?\$?\s*([0-9][0-9,]+(?:\.\d+)?)/i
   );
   const bankLoan = extractLabeledAmount(
     text,
-    /Long-term bank loan[\\s\\S]{0,120}?\\$?\\s*([0-9][0-9,]+(?:\\.\\d+)?)/i
+    /Long-term bank loan[\s\S]{0,120}?\$?\s*([0-9][0-9,]+(?:\.\d+)?)/i
   );
 
   const explicit = [];
@@ -434,8 +434,8 @@ function findInterestBearingDebt(text, usgaap, filing) {
   // Fallback: parse individual financial-statement rows, but never use
   // total liabilities or generic XBRL debt facts that can represent a
   // different accounting concept.
-  const lines = text.split(/\\r?\\n/).map(normalizeLine).filter(Boolean);
-  const rowRegex = /^(?:convertible debt|convertible note|long-term bank loan|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?)\\b/i;
+  const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  const rowRegex = /^(?:convertible debt|convertible note|long-term bank loan|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?)\b/i;
   const matched = [];
 
   for (const line of lines) {
