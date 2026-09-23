@@ -9,116 +9,75 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers, body: "" };
 
   try {
-    // قوائم Yahoo الجاهزة تعمل عبر GET ولا تحتاج custom screener.
-    // نجمع عدة قوائم لتكوين كون مرشحين واسع، ثم index.html يفحص
-    // القاع والثبات 3 أيام أو أكثر. المرشح: سعر $1-$7 وقيمة سوقية <= $10M.
-    // نستخدم Yahoo Custom Screener مباشرة بدل القوائم الجاهزة.
-    // القوائم الجاهزة تضع حدوداً سوقية كبيرة، لذلك كانت ترجع قائمة فارغة
-    // بعد شرطنا <= $10M.
-    const screenBody = {
-      offset: 0,
-      size: 250,
-      sortField: "eodvolume",
-      sortType: "DESC",
-      quoteType: "EQUITY",
-      query: {
-        operator: "AND",
-        operands: [
-          {
-            operator: "EQ",
-            operands: ["region", "us"]
-          },
-          {
-            operator: "GTE",
-            operands: ["intradayprice", 1]
-          },
-          {
-            operator: "LTE",
-            operands: ["intradayprice", 7]
-          },
-          {
-            operator: "LTE",
-            operands: ["intradaymarketcap", 10000000]
-          },
-          {
-            operator: "IS-IN",
-            operands: ["exchange", "NMS", "NYQ"]
-          }
-        ]
-      },
-      userId: "",
-      userIdType: "guid"
-    };
+    // نستخدم Nasdaq Screener كمصدر لقائمة الأسهم بدلاً من Yahoo Screener.
+    // الهدف: أسهم أمريكية بسعر $1-$7 وقيمة سوقية <= $10M.
+    // نأخذ Nasdaq + NYSE + AMEX ثم نفلتر محلياً، وبعدها index.html يفحص القاع.
+    const exchanges = ["NASDAQ", "NYSE", "AMEX"];
 
-    async function getCandidates() {
-      const urls = [
-        "https://query2.finance.yahoo.com/v1/finance/screener",
-        "https://query1.finance.yahoo.com/v1/finance/screener"
-      ];
+    async function getExchange(exchange) {
+      const url =
+        "https://api.nasdaq.com/api/screener/stocks" +
+        "?tableonly=true&limit=25&offset=0&exchange=" +
+        encodeURIComponent(exchange) + "&download=true";
 
-      let lastError = null;
-
-      for (const url of urls) {
-        try {
-          const response = await fetch(
-            url + "?formatted=false&lang=en-US&region=US&corsDomain=finance.yahoo.com",
-            {
-              method: "POST",
-              headers: {
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "application/json,text/plain,*/*",
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify(screenBody)
-            }
-          );
-
-          if (!response.ok) {
-            lastError = new Error("Yahoo screener HTTP " + response.status);
-            continue;
-          }
-
-          const json = await response.json();
-          const quotes = json?.finance?.result?.[0]?.quotes;
-
-          if (Array.isArray(quotes)) return quotes;
-
-          lastError = new Error("Yahoo screener returned no quotes");
-        } catch (e) {
-          lastError = e;
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36",
+          "Accept": "application/json,text/plain,*/*",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Origin": "https://www.nasdaq.com",
+          "Referer": "https://www.nasdaq.com/market-activity/stocks/screener"
         }
+      });
+
+      if (!response.ok) {
+        throw new Error("Nasdaq " + exchange + " HTTP " + response.status);
       }
 
-      throw lastError || new Error("Yahoo screener failed");
+      const json = await response.json();
+      const rows = json?.data?.rows;
+
+      if (!Array.isArray(rows)) {
+        throw new Error("Nasdaq " + exchange + " returned no rows");
+      }
+
+      return rows;
     }
 
-    const quotes = await getCandidates();
-
+    const lists = await Promise.all(exchanges.map(getExchange));
     const map = new Map();
 
-    for (const q of quotes) {
-      const symbol = String(q.symbol || "").trim().toUpperCase();
-      const price = Number(q.regularMarketPrice);
-      const marketCap = Number(q.marketCap);
+    for (const rows of lists) {
+      for (const q of rows) {
+        const symbol = String(q.symbol || "").trim().toUpperCase();
+        const price = Number(String(q.lastsale || "").replace(/[$,]/g, ""));
+        const marketCap = Number(String(q.marketCap || "").replace(/[$,]/g, ""));
 
-      if (
-        symbol &&
-        /^[-A-Z0-9.]+$/.test(symbol) &&
-        Number.isFinite(price) &&
-        price >= 1 &&
-        price <= 7 &&
-        Number.isFinite(marketCap) &&
-        marketCap <= 10000000
-      ) {
-        map.set(symbol, q);
+        if (
+          symbol &&
+          /^[A-Z0-9.\\-]+$/.test(symbol) &&
+          Number.isFinite(price) &&
+          price >= 1 &&
+          price <= 7 &&
+          Number.isFinite(marketCap) &&
+          marketCap > 0 &&
+          marketCap <= 10000000
+        ) {
+          map.set(symbol, q);
+        }
       }
     }
+
+    const quotes = [...map.values()];
+
+
+    const symbols = quotes.map(q => String(q.symbol || "").trim().toUpperCase()).filter(Boolean);
 
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        symbols: [...map.keys()],
+        symbols,
         count: map.size
       })
     };
