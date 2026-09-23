@@ -730,12 +730,6 @@ function extractFlattenedIncomeComponents(text) {
 }
 
 function extractCurrentQuarterGrossPositiveIncome(text) {
-  const flattened = extractFlattenedIncomeComponents(text);
-  if (flattened.length) {
-    const total = flattened.reduce((sum, v) => sum + v, 0);
-    if (total > 0) return total;
-  }
-
   const rowLabels = [
     /^(?:sales|revenue(?:s)?|net sales)\\b/i,
     /^interest income(?:,?\\s+net)?\\b/i,
@@ -743,15 +737,29 @@ function extractCurrentQuarterGrossPositiveIncome(text) {
     /^change in fair value of conversion option liability\\b/i,
     /^change in fair value of warrants? liabilities?\\b/i,
     /^change in fair value of .* liability\\b/i,
-    /^gain on\\b/i,
-    /^gain from\\b/i
+    /^gain (?:on|from)\\b/i
   ];
 
+  const section = getPrimaryOperationsStatementSection(text);
+  if (!section) return null;
+
   const values = [];
-  for (const label of rowLabels) {
-    const found = extractStatementRowValues(text, label);
-    for (const v of found) {
-      if (v > 0 && !values.includes(v)) values.push(v);
+  const lines = section.split(/\\r?\\n/).map(normalizeLine).filter(Boolean);
+
+  for (const line of lines) {
+    for (const label of rowLabels) {
+      if (!label.test(line)) continue;
+
+      // With table-cell separators preserved, the first numeric token after
+      // the row label is the current-quarter column.
+      const after = line.replace(label, " ");
+      const nums = after.match(/\\(?[0-9][0-9,]*(?:\\.\\d+)?\\)?/g) || [];
+
+      if (nums.length) {
+        const n = Math.abs(parseNumber(nums[0]));
+        if (Number.isFinite(n) && n > 0 && !values.includes(n)) values.push(n);
+      }
+      break;
     }
   }
 
@@ -1184,8 +1192,11 @@ function cleanText(html) {
     String(html || "")
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      // Keep SEC table rows separated so label/value extraction is stable.
+      // Preserve SEC table cell and row boundaries. This is important because
+      // the first numeric cell is the current-quarter value.
       .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/td>/gi, " | ")
+      .replace(/<\/th>/gi, " | ")
       .replace(/<\/tr>/gi, "\n")
       .replace(/<\/p>/gi, "\n")
       .replace(/<\/div>/gi, "\n")
