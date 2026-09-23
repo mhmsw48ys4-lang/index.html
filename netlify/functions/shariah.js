@@ -706,6 +706,27 @@ function extractSecCurrentQuarterIncomeComponents(text) {
     }
   }
 
+  // Final table-cell fallback. Some SEC HTML is flattened without
+  // reliable newline boundaries, but the "|" cell separators remain.
+  const cellPatterns = [
+    { key: "sales", re: /Sales\s*(?:\|\s*){1,6}\$?\s*(?:\|\s*)*([0-9][0-9,]*(?:\.\d+)?)/i },
+    { key: "interest", re: /Interest income(?:,\s*net)?\s*(?:\|\s*){1,6}\$?\s*(?:\|\s*)*([0-9][0-9,]*(?:\.\d+)?)/i },
+    { key: "conversion", re: /Change in fair value of conversion option liability\s*(?:\|\s*){1,6}\$?\s*(?:\|\s*)*([0-9][0-9,]*(?:\.\d+)?)/i },
+    { key: "warrants", re: /Change in fair value of warrants liabilities?\s*(?:\|\s*){1,6}\$?\s*(?:\|\s*)*([0-9][0-9,]*(?:\.\d+)?)/i },
+    { key: "dividend", re: /Dividend income\s*(?:\|\s*){1,6}\$?\s*(?:\|\s*)*([0-9][0-9,]*(?:\.\d+)?)/i }
+  ];
+
+  for (const item of cellPatterns) {
+    if (components.some(x => x.key === item.key)) continue;
+    const hit = statement.match(item.re);
+    if (!hit) continue;
+    const value = parseNumber(hit[1]);
+    if (Number.isFinite(value) && value > 0 && !seen.has(value)) {
+      seen.add(value);
+      components.push({ key: item.key, value });
+    }
+  }
+
   if (!components.length) return null;
 
   return {
