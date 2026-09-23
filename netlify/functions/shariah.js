@@ -631,8 +631,56 @@ function findProhibitedIncome(text, usgaap, filing) {
 
   return null;
 }
+function extractCurrentQuarterPositiveIncome(text) {
+  const raw = String(text || "");
+  const startMatch = raw.match(/Condensed (?:Consolidated )?Statements of Operations(?: and Comprehensive (?:Loss|Income))?/i);
+  if (!startMatch) return null;
+
+  const tail = raw.slice(startMatch.index);
+  const endMatch = tail.match(/(?:Net loss attributable to common stockholders|Net income attributable to common stockholders)/i);
+  const statement = endMatch ? tail.slice(0, endMatch.index) : tail.slice(0, 50000);
+  const lines = statement.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+
+  const labels = [
+    /^Sales\b/i,
+    /^Revenue(?:s)?\b/i,
+    /^Net sales\b/i,
+    /^Interest income(?:,?\s+net)?\b/i,
+    /^Dividend income\b/i,
+    /^Change in fair value of conversion option liability\b/i,
+    /^Change in fair value of warrants? liabilities?\b/i,
+    /^Change in fair value of .* liability\b/i,
+    /^Gain on\b/i,
+    /^Gain from\b/i
+  ];
+
+  const values = [];
+  for (const line of lines) {
+    for (const label of labels) {
+      if (!label.test(line)) continue;
+      const v = firstFinancialValueAfterLabel(line, label);
+      if (v != null && v > 0 && !values.includes(v)) values.push(v);
+      break;
+    }
+  }
+
+  const total = values.reduce((sum, v) => sum + v, 0);
+  return total > 0 ? total : null;
+}
+
 function findTotalIncome(text, usgaap, filing) {
   const raw = String(text || "");
+
+  // Read the actual current-quarter statement rows before any broader
+  // flattened-table fallback. This prevents prior-period columns and labels
+  // such as "Cost of sales" from corrupting the denominator.
+  const statementGross = extractCurrentQuarterPositiveIncome(raw);
+  if (statementGross != null) {
+    return {
+      value: statementGross,
+      source: "SEC current-quarter Statement of Operations"
+    };
+  }
 
   // If the filing explicitly presents current-quarter interest income and
   // total other income, use the current-quarter statement value as the gross
