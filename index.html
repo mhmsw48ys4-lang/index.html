@@ -1904,7 +1904,7 @@ async function autoScanSplits(){
             Number(a.latest.close)<=10 &&
             Number(a.rsi)>=23 &&
             Number(a.rsi)<=35 &&
-            Number(a.macdHistogram)>0 &&
+            Number(a.macd?.histogram)>0 &&
             Number(a.latest.close)>Number(a.ema20) &&
             Number(a.latest.close)>Number(a.ema30) &&
             Number(a.latest.close)>Number(a.ema50) &&
@@ -1945,7 +1945,7 @@ function renderPivotAutoCard(a){
     <div class="scanItem"><div class="scanLabel">السعر</div><div class="scanValue">${money(a.latest.close)}</div></div>
     <div class="scanItem"><div class="scanLabel">RSI14</div><div class="scanValue">${Number(a.rsi).toFixed(1)}</div></div>
     <div class="scanItem"><div class="scanLabel">RVOL</div><div class="scanValue">${Number(a.rvol).toFixed(2)}</div></div>
-    <div class="scanItem"><div class="scanLabel">MACD</div><div class="scanValue">${Number(a.macdHistogram).toFixed(4)}</div></div>
+    <div class="scanItem"><div class="scanLabel">MACD</div><div class="scanValue">${Number(a.macd?.histogram||0).toFixed(4)}</div></div>
     <div class="scanItem"><div class="scanLabel">الثبات</div><div class="scanValue">4 أيام ✓</div></div>
   </div>
   <button class="scanAction" onclick="moveSplitToManual('${symbol}')">
