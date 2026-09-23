@@ -411,17 +411,17 @@ placeholder="اكتب رمز السهم مثل NTCL">
 <div class="scanner">
 
 <div class="scannerTitle">
-📊 فرز التقسيمات
+📊 مسح أسهم الارتكاز
 </div>
 
 <div class="scannerDesc">
-المسح التلقائي يعرض فقط الأسهم التي لديها تقسيم خلال آخر 100 يوم وسعرها بين $1 و $10. لا يطبق شروط الارتكاز هنا. إذا وجدت سهماً مناسباً، انقله إلى البحث اليدوي لتحليله بنفس شروطك الأصلية.
+المسح التلقائي يبحث عن الأسهم بين $1 و $10 ثم يطبق شروط الارتكاز الأصلية كاملة. إذا ظهر سهم مناسب، انقله للبحث اليدوي لتحليله بالتفصيل.
 </div>
 
 <button
 class="scanButton"
 onclick="autoScanSplits()">
-🔎 مسح التقسيمات تلقائياً
+🔎 مسح أسهم الارتكاز تلقائياً
 </button>
 
 <div style="height:8px"></div>
@@ -1860,56 +1860,98 @@ async function autoScanSplits(){
   const status=document.getElementById("scanStatus");
   const results=document.getElementById("scanResults");
   results.innerHTML="";
-  status.textContent="جاري جلب أسماء التقسيمات لآخر 100 يوم...";
+  status.textContent="جاري مسح الأسهم والبحث عن أسهم تحقق شروط الارتكاز...";
 
   try{
-    const events=await fetchSplitCalendar();
-    const latestBySymbol={};
-    for(const e of events){
-      const old=latestBySymbol[e.symbol];
-      if(!old || e.date>old.date) latestBySymbol[e.symbol]=e;
+    const response=await fetch("/.netlify/functions/pivot",{cache:"no-store"});
+    if(!response.ok){
+      const err=await response.json().catch(()=>({}));
+      throw new Error(err.error||"تعذر جلب قائمة الأسهم من خادم الموقع");
     }
-    const candidates=Object.values(latestBySymbol)
-      .filter(x=>x.date>=isoDateDaysAgo(100))
-      .sort((a,b)=>b.date.localeCompare(a.date));
 
-    if(!candidates.length){
-      status.textContent="انتهى المسح — لا توجد تقسيمات خلال آخر 100 يوم حسب المصدر.";
-      results.innerHTML='<div class="empty">لا توجد تقسيمات خلال آخر 100 يوم حسب المصدر.</div>';
+    const json=await response.json();
+    const symbols=Array.isArray(json?.symbols)?json.symbols:[];
+
+    if(!symbols.length){
+      status.textContent="انتهى المسح — لم تصل قائمة أسهم للفحص.";
+      results.innerHTML='<div class="empty">لم تصل قائمة أسهم للفحص.</div>';
       return;
     }
 
-    // أهداف البحث التلقائي: فقط الأسهم بين $1 و $5.
-    // البحث اليدوي يبقى كما هو ولا يتغير.
-    const priced=[];
-    const rejected=[];
-    for(let i=0;i<candidates.length;i++){
-      const e=candidates[i];
-      status.textContent="جاري التحقق من السعر "+e.symbol+" — "+(i+1)+" من "+candidates.length+"...";
-      try{
-        const stock=await getStock(e.symbol);
-        const price=Number(stock?.latest?.close);
-        if(isFinite(price) && price>=1 && price<=10){
-          priced.push({...e,price});
+    const found=[];
+    const errors=[];
+    const batchSize=10;
+
+    for(let i=0;i<symbols.length;i+=batchSize){
+      const batch=symbols.slice(i,i+batchSize);
+      status.textContent="جاري تحليل الارتكاز "+Math.min(i+batch.length,symbols.length)+" من "+symbols.length+"...";
+
+      const settled=await Promise.allSettled(batch.map(async symbol=>{
+        const result=await getStock(symbol);
+        return analyze(result);
+      }));
+
+      for(const r of settled){
+        if(r.status==="fulfilled"){
+          const a=r.value;
+          if(
+            a &&
+            a.pivot &&
+            a.stability &&
+            a.stability.complete &&
+            a.latest &&
+            Number(a.latest.close)>=1 &&
+            Number(a.latest.close)<=10 &&
+            Number(a.rsi)>=23 &&
+            Number(a.rsi)<=35 &&
+            Number(a.macdHistogram)>0 &&
+            Number(a.latest.close)>Number(a.ema20) &&
+            Number(a.latest.close)>Number(a.ema30) &&
+            Number(a.latest.close)>Number(a.ema50) &&
+            Number(a.rvol)>=1.2
+          ){
+            found.push(a);
+          }
         }else{
-          rejected.push(e.symbol);
+          errors.push(String(r.reason?.message||r.reason||"خطأ"));
         }
-      }catch(error){
-        rejected.push(e.symbol);
       }
     }
 
-    if(!priced.length){
-      status.textContent="انتهى المسح — لا توجد تقسيمات ضمن نطاق $1 إلى $10 خلال آخر 100 يوم.";
-      results.innerHTML='<div class="empty">لا توجد أسهم مقسمة ضمن نطاق $1 إلى $10 حسب آخر سعر متاح.</div>';
+    found.sort((a,b)=>(b.rvol||0)-(a.rvol||0));
+
+    if(!found.length){
+      status.textContent="انتهى المسح — لم يظهر سهم يحقق شروط الارتكاز كاملة ضمن الأسهم المفحوصة.";
+      results.innerHTML='<div class="empty">لم يظهر سهم يحقق شروط الارتكاز كاملة حالياً.</div>';
       return;
     }
 
-    status.innerHTML="تم العثور على "+priced.length+" سهم مقسم بين $1 و $10 خلال آخر 100 يوم ✓";
-    results.innerHTML=priced.map(renderSplitOnlyCard).join("");
+    status.innerHTML="تم المسح ✓ — وجدنا "+found.length+" سهم يحقق شروط الارتكاز.";
+    results.innerHTML=found.map(renderPivotAutoCard).join("");
   }catch(error){
-    status.innerHTML='<div class="error">تعذر تشغيل مسح التقسيمات: '+escapeHtml(error.message)+'</div>';
+    status.innerHTML='<div class="error">تعذر تشغيل مسح الارتكاز: '+escapeHtml(error.message)+'</div>';
   }
+}
+
+function renderPivotAutoCard(a){
+  const symbol=escapeHtml(a.symbol);
+  return `
+<div class="scanCard">
+  <div class="scanHead">
+    <div class="scanSymbol">${symbol}</div>
+    <div class="scanDays">ارتكاز مكتمل ✓</div>
+  </div>
+  <div class="scanGrid">
+    <div class="scanItem"><div class="scanLabel">السعر</div><div class="scanValue">${money(a.latest.close)}</div></div>
+    <div class="scanItem"><div class="scanLabel">RSI14</div><div class="scanValue">${Number(a.rsi).toFixed(1)}</div></div>
+    <div class="scanItem"><div class="scanLabel">RVOL</div><div class="scanValue">${Number(a.rvol).toFixed(2)}</div></div>
+    <div class="scanItem"><div class="scanLabel">MACD</div><div class="scanValue">${Number(a.macdHistogram).toFixed(4)}</div></div>
+    <div class="scanItem"><div class="scanLabel">الثبات</div><div class="scanValue">4 أيام ✓</div></div>
+  </div>
+  <button class="scanAction" onclick="moveSplitToManual('${symbol}')">
+    وضع ${symbol} في البحث اليدوي
+  </button>
+</div>`;
 }
 
 function renderSplitOnlyCard(e){
