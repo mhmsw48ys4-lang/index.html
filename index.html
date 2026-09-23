@@ -415,7 +415,7 @@ placeholder="اكتب رمز السهم مثل NTCL">
 </div>
 
 <div class="scannerDesc">
-المسح التلقائي يعرض فقط رموز الأسهم التي لديها تقسيم خلال آخر 100 يوم. لا يطبق شروط الارتكاز هنا. إذا وجدت سهماً مناسباً، انقله إلى البحث اليدوي لتحليله بنفس شروطك الأصلية.
+المسح التلقائي يعرض فقط الأسهم التي لديها تقسيم خلال آخر 100 يوم وسعرها بين $1 و $5. لا يطبق شروط الارتكاز هنا. إذا وجدت سهماً مناسباً، انقله إلى البحث اليدوي لتحليله بنفس شروطك الأصلية.
 </div>
 
 <button
@@ -1879,8 +1879,34 @@ async function autoScanSplits(){
       return;
     }
 
-    status.innerHTML="تم العثور على "+candidates.length+" رمز مقسم خلال آخر 100 يوم ✓";
-    results.innerHTML=candidates.map(renderSplitOnlyCard).join("");
+    // أهداف البحث التلقائي: فقط الأسهم بين $1 و $5.
+    // البحث اليدوي يبقى كما هو ولا يتغير.
+    const priced=[];
+    const rejected=[];
+    for(let i=0;i<candidates.length;i++){
+      const e=candidates[i];
+      status.textContent="جاري التحقق من السعر "+e.symbol+" — "+(i+1)+" من "+candidates.length+"...";
+      try{
+        const stock=await getStock(e.symbol);
+        const price=Number(stock?.latest?.close);
+        if(isFinite(price) && price>=1 && price<=5){
+          priced.push({...e,price});
+        }else{
+          rejected.push(e.symbol);
+        }
+      }catch(error){
+        rejected.push(e.symbol);
+      }
+    }
+
+    if(!priced.length){
+      status.textContent="انتهى المسح — لا توجد تقسيمات ضمن نطاق $1 إلى $5 خلال آخر 100 يوم.";
+      results.innerHTML='<div class="empty">لا توجد أسهم مقسمة ضمن نطاق $1 إلى $5 حسب آخر سعر متاح.</div>';
+      return;
+    }
+
+    status.innerHTML="تم العثور على "+priced.length+" سهم مقسم بين $1 و $5 خلال آخر 100 يوم ✓";
+    results.innerHTML=priced.map(renderSplitOnlyCard).join("");
   }catch(error){
     status.innerHTML='<div class="error">تعذر تشغيل مسح التقسيمات: '+escapeHtml(error.message)+'</div>';
   }
@@ -1895,6 +1921,10 @@ function renderSplitOnlyCard(e){
 <div class="scanDays">${days} يوم</div>
 </div>
 <div class="scanGrid">
+<div class="scanItem">
+<div class="scanLabel">السعر</div>
+<div class="scanValue">${money(e.price)}</div>
+</div>
 <div class="scanItem">
 <div class="scanLabel">تاريخ التقسيم</div>
 <div class="scanValue">${dateText(e.date)}</div>
