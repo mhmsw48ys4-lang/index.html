@@ -36,7 +36,7 @@ exports.handler = async (event) => {
     );
 
     const recent = submissions?.filings?.recent || {};
-    const filing = chooseLatestFinancialFiling(recent);
+    const filing = await chooseLatestFinancialFiling(recent, cik, secHeaders);
 
     if (!filing) {
       return send(200, {
