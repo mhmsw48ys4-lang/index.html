@@ -645,7 +645,9 @@ function extractStatementAmount(text, labelPattern) {
 function extractSecCurrentQuarterIncomeComponents(text) {
   const raw = String(text || "");
 
-  // Pick the real Statement of Operations, not the table of contents or MD&A.
+  // The SEC cleaner preserves table cells with "|" and rows with newlines.
+  // Parse the actual Statement of Operations cell-by-cell so the first
+  // numeric cell is always the current-quarter value.
   const titleRe = /(?:Condensed\s+(?:Consolidated\s+)?)?Statements\s+of\s+Operations(?:\s+and\s+Comprehensive\s+(?:Loss|Income))?/gi;
   let m;
   let statement = null;
@@ -653,7 +655,7 @@ function extractSecCurrentQuarterIncomeComponents(text) {
   while ((m = titleRe.exec(raw))) {
     const tail = raw.slice(m.index, m.index + 60000);
     if (!/Three\s+Months\s+Ended/i.test(tail)) continue;
-    if (!/(?:^|\n)\s*Sales\s*(?:\||\$|[0-9])/im.test(tail) && !/\bSales\s+\|/i.test(tail)) continue;
+    if (!/(?:^|\n)\s*Sales\s*\|/im.test(tail)) continue;
 
     const stop = tail.search(/Condensed\s+Statements\s+of\s+Stockholders|Condensed\s+Statements\s+of\s+Cash\s+Flows|Statements\s+of\s+Cash\s+Flows|Notes\s+to\s+(?:Condensed\s+)?Financial\s+Statements/i);
     statement = stop > 0 ? tail.slice(0, stop) : tail;
@@ -661,10 +663,6 @@ function extractSecCurrentQuarterIncomeComponents(text) {
   }
 
   if (!statement) return null;
-
-  const lines = statement.split(/\r?\n/).map(x =>
-    String(x || "").replace(/\|/g, " ").replace(/\s+/g, " ").trim()
-  ).filter(Boolean);
 
   const wanted = [
     { key: "sales", re: /^Sales$/i },
@@ -678,44 +676,33 @@ function extractSecCurrentQuarterIncomeComponents(text) {
 
   const components = [];
   const seen = new Set();
+  const lines = statement.split(/\r?\n/).map(x => String(x || "").trim()).filter(Boolean);
 
   for (const line of lines) {
-    const normalized = line.replace(/^FEMASYS INC\.\s+/i, "").trim();
+    const cells = line.split("|").map(x => x.trim()).filter(Boolean);
+    if (!cells.length) continue;
+
+    const label = cells[0].replace(/^FEMASYS INC\.\s+/i, "").trim();
 
     for (const item of wanted) {
-      if (!item.re.test(normalized)) continue;
+      if (!item.re.test(label)) continue;
 
-      const rest = normalized.replace(item.re, "").trim();
-      const tokens = rest.match(/(?:—|–|\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?)/g) || [];
-      if (!tokens.length) break;
+      let value = null;
+      for (const cell of cells.slice(1)) {
+        const token = cell.match(/^\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?$/);
+        if (!token) continue;
+        const n = parseNumber(token[0]);
+        if (Number.isFinite(n)) {
+          value = Math.abs(n);
+          break;
+        }
+      }
 
-      const value = parseNumber(tokens[0]);
-      if (Number.isFinite(value) && value > 0 && !seen.has(value)) {
+      if (value != null && value > 0 && !seen.has(value)) {
         seen.add(value);
         components.push({ key: item.key, value });
       }
       break;
-    }
-  }
-
-  // SEC HTML can flatten several table cells onto one line. Use exact row
-  // boundaries as a fallback; "Sales and marketing" can never match ^Sales$.
-  const rowPatterns = [
-    { key: "sales", re: /(?:^|\n)\s*Sales\s*(?:\||\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i },
-    { key: "interest", re: /(?:^|\n)\s*Interest income(?:,\s*net)?\s*(?:\||\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i },
-    { key: "dividend", re: /(?:^|\n)\s*Dividend income\s*(?:\||\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i },
-    { key: "conversion", re: /(?:^|\n)\s*Change in fair value of conversion option liability\s*(?:\||\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i },
-    { key: "warrants", re: /(?:^|\n)\s*Change in fair value of warrants liabilities?\s*(?:\||\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i }
-  ];
-
-  for (const item of rowPatterns) {
-    if (components.some(x => x.key === item.key)) continue;
-    const hit = statement.match(item.re);
-    if (!hit) continue;
-    const value = parseNumber(hit[1]);
-    if (Number.isFinite(value) && value > 0 && !seen.has(value)) {
-      seen.add(value);
-      components.push({ key: item.key, value });
     }
   }
 
