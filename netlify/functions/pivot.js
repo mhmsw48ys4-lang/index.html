@@ -9,84 +9,69 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers, body: "" };
 
   try {
-    const body = {
-      query: {
-        operator: "AND",
-        operands: [
-          { operator: "EQ", operands: ["region", "us"] },
-          { operator: "GTE", operands: ["intradayprice", 1] },
-          { operator: "LTE", operands: ["intradayprice", 10] },
-          { operator: "GT", operands: ["avgdailyvol3m", 200000] },
-          { operator: "IS-IN", operands: ["exchange", ["NMS", "NYQ", "ASE", "BTS"]] }
-        ]
-      },
-      sortField: "dayvolume",
-      sortType: "DESC",
-      quoteType: "EQUITY",
-      offset: 0,
-      size: 250,
-      userId: "",
-      userIdType: "guid"
-    };
+    // نستخدم واجهة Yahoo الجاهزة (GET) بدل الـ custom screener الذي كان يرفض الطلب.
+    // نجمع أكثر من قائمة حتى لا نعتمد على قائمة واحدة فقط.
+    const screens = [
+      "most_actives",
+      "day_gainers",
+      "day_losers",
+      "small_cap_gainers"
+    ];
 
-    // Yahoo's custom screener endpoint can require a crumb/cookie pair.
-    // Get them first, then submit the screener request server-side.
-    const crumbResponse = await fetch(
-      "https://query1.finance.yahoo.com/v1/test/getcrumb",
-      {
+    async function getScreen(scrId) {
+      const url =
+        "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved" +
+        "?formatted=false&lang=en-US&region=US" +
+        "&scrIds=" + encodeURIComponent(scrId) +
+        "&count=100&start=0" +
+        "&corsDomain=finance.yahoo.com";
+
+      const response = await fetch(url, {
         headers: {
           "User-Agent": "Mozilla/5.0",
-          "Accept": "text/plain,*/*"
+          "Accept": "application/json,text/plain,*/*"
+        }
+      });
+
+      if (!response.ok) throw new Error(scrId + " HTTP " + response.status);
+
+      const json = await response.json();
+      return json?.finance?.result?.[0]?.quotes || [];
+    }
+
+    const lists = await Promise.allSettled(screens.map(getScreen));
+    const map = new Map();
+
+    for (const item of lists) {
+      if (item.status !== "fulfilled") continue;
+
+      for (const q of item.value) {
+        const symbol = String(q.symbol || "").trim().toUpperCase();
+        const price = Number(q.regularMarketPrice ?? q.priceHint);
+        const avgVol = Number(q.averageDailyVolume3Month ?? q.averageDailyVolume10Day ?? 0);
+
+        if (
+          symbol &&
+          /^[-A-Z0-9.]+$/.test(symbol) &&
+          Number.isFinite(price) &&
+          price >= 1 &&
+          price <= 10 &&
+          avgVol >= 200000
+        ) {
+          map.set(symbol, q);
         }
       }
-    );
-
-    if (!crumbResponse.ok) {
-      throw new Error("Yahoo crumb HTTP " + crumbResponse.status);
     }
 
-    const crumb = (await crumbResponse.text()).trim();
-    const setCookie = crumbResponse.headers.get("set-cookie") || "";
-    const cookie = setCookie
-      .split(",")
-      .map(x => x.split(";")[0].trim())
-      .filter(Boolean)
-      .join("; ");
-
-    if (!crumb) throw new Error("Yahoo لم يرجع مفتاح الجلسة");
-
-    const url =
-      "https://query1.finance.yahoo.com/v1/finance/screener" +
-      "?crumb=" + encodeURIComponent(crumb) +
-      "&formatted=false&lang=en-US&region=US&corsDomain=finance.yahoo.com";
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json,text/plain,*/*",
-        "Content-Type": "application/json",
-        ...(cookie ? { "Cookie": cookie } : {})
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error("Yahoo Screener HTTP " + response.status + " — " + detail.slice(0,180));
-    }
-
-    const json = await response.json();
-    const quotes = json?.finance?.result?.[0]?.quotes || [];
-
-    const symbols = quotes
-      .map(x => String(x.symbol || "").trim().toUpperCase())
-      .filter(x => /^[-A-Z0-9.]+$/.test(x));
+    const symbols = [...map.keys()];
 
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ symbols: [...new Set(symbols)], count: symbols.length })
+      body: JSON.stringify({
+        symbols,
+        count: symbols.length
+      })
     };
   } catch (error) {
     return {
