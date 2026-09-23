@@ -79,14 +79,12 @@ exports.handler = async (event) => {
 
     const liveMarket = await getCurrentMarketData(symbol);
     const currentPrice = liveMarket?.price ?? await getCurrentPrice(symbol);
-    const shares = liveMarket?.shares ?? await findCurrentSharesOutstanding(filingText, usgaap, dei, filing, recent, cik, secHeaders);
+    const shares = liveMarket?.shares ?? null;
 
-    // AAOIFI denominator: use the live market capitalization supplied by the
-    // market-data quote when available. Do not reconstruct today's market cap
-    // from an old SEC share count after a reverse split/issuance.
-    const marketCap = liveMarket?.marketCap != null
-      ? liveMarket.marketCap
-      : (currentPrice != null && shares != null ? currentPrice * shares : null);
+    // AAOIFI denominator: use a live market-cap field from the market-data
+    // source. Never rebuild today's market cap from an old SEC share count.
+    // This is especially important after reverse splits and new share issues.
+    const marketCap = liveMarket?.marketCap ?? null;
 
     const sic = String(submissions.sic || "");
     const sicDescription = String(submissions.sicDescription || "");
@@ -114,6 +112,7 @@ exports.handler = async (event) => {
         filing: publicFiling(filing),
         marketCap,
         marketCapDate: new Date().toISOString(),
+        marketCapSource: liveMarket?.source || null,
         currentPrice,
         sharesOutstanding: shares,
         reason: "النشاط الأساسي يحتاج رفضاً في الفحص الأولي وفق التصنيف الظاهر في SEC"
@@ -201,6 +200,7 @@ exports.handler = async (event) => {
       marketCapDate: new Date().toISOString(),
       currentPrice,
       sharesOutstanding: shares,
+      marketCapSource: liveMarket?.source || null,
       checks,
       note: complete
         ? "تم استخراج البيانات من أحدث إفصاح مالي متاح، مع استخدام XBRL/نص الإفصاح عند الحاجة"
@@ -546,11 +546,52 @@ function latestFactFromFacts(names, primaryFacts, secondaryFacts, filing) {
 }
 
 async function getCurrentMarketData(symbol) {
-  const url =
-    "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
-    encodeURIComponent(symbol);
+  // Nasdaq screener provides a current last-sale price and market-cap field.
+  // Prefer it over SEC share counts because SEC shares can be stale after
+  // reverse splits or later share issuances.
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36",
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.nasdaq.com",
+    "Referer": "https://www.nasdaq.com/market-activity/stocks/screener"
+  };
 
+  for (const exchange of ["NASDAQ", "NYSE", "AMEX"]) {
+    try {
+      const url =
+        "https://api.nasdaq.com/api/screener/stocks" +
+        "?tableonly=true&limit=5000&offset=0&exchange=" +
+        encodeURIComponent(exchange) + "&download=true";
+
+      const response = await fetch(url, { headers });
+      if (!response.ok) continue;
+
+      const json = await response.json();
+      const rows = Array.isArray(json?.data?.rows) ? json.data.rows : [];
+      const q = rows.find(x => String(x.symbol || "").trim().toUpperCase() === symbol);
+      if (!q) continue;
+
+      const price = parseMarketNumber(q.lastsale);
+      const marketCap = parseMarketNumber(q.marketCap);
+      const shares = parseMarketNumber(q.sharesOutstanding ?? q.sharesoutstanding);
+
+      return {
+        price: Number.isFinite(price) && price > 0 ? price : null,
+        marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
+        shares: Number.isFinite(shares) && shares > 0 ? shares : null,
+        source: "Nasdaq Screener"
+      };
+    } catch (_) {}
+  }
+
+  // Yahoo is only a secondary live source. We do not fall back to SEC share
+  // counts for market capitalization.
   try {
+    const url =
+      "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
+      encodeURIComponent(symbol);
+
     const response = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }
     });
@@ -567,11 +608,28 @@ async function getCurrentMarketData(symbol) {
     return {
       price: Number.isFinite(price) && price > 0 ? price : null,
       marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
-      shares: Number.isFinite(shares) && shares > 0 ? shares : null
+      shares: Number.isFinite(shares) && shares > 0 ? shares : null,
+      source: "Yahoo Finance"
     };
   } catch (_) {
     return null;
   }
+}
+
+function parseMarketNumber(value) {
+  if (value == null) return NaN;
+  let s = String(value).trim().replace(/[$,\s]/g, "");
+  if (!s) return NaN;
+
+  const suffix = s.slice(-1).toUpperCase();
+  const multipliers = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
+  if (multipliers[suffix]) {
+    const n = Number(s.slice(0, -1));
+    return Number.isFinite(n) ? n * multipliers[suffix] : NaN;
+  }
+
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
 }
 
 async function getCurrentPrice(symbol) {
