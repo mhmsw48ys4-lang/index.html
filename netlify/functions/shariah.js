@@ -648,13 +648,10 @@ function extractSecCurrentQuarterIncomeComponents(text) {
   // One deterministic parser for SEC tables. It does not depend on a
   // particular statement-title layout. We first isolate the Operations
   // statement, then read the first numeric cell after each exact row label.
-  const title = raw.search(
-    /Statements\s+of\s+Operations(?:\s+and\s+Comprehensive\s+(?:Loss|Income))?/i
-  );
-
-  const source = title >= 0
-    ? raw.slice(title, title + 70000)
-    : raw;
+  // Select the actual Operations statement, not the table-of-contents
+  // occurrence that appears earlier in many SEC filings.
+  const primarySection = getPrimaryOperationsStatementSection(raw);
+  const source = primarySection || raw;
 
   const row = (label) => {
     const re = new RegExp(
