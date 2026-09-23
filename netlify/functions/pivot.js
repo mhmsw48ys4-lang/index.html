@@ -21,24 +21,45 @@ exports.handler = async (event) => {
     ];
 
     async function getScreen(scrId) {
-      const url =
-        "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved" +
-        "?formatted=false&lang=en-US&region=US" +
-        "&scrIds=" + encodeURIComponent(scrId) +
-        "&count=250&start=0" +
-        "&corsDomain=finance.yahoo.com";
+      const bases = [
+        "https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved",
+        "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
+      ];
+      let lastError = null;
 
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0",
-          "Accept": "application/json,text/plain,*/*"
+      for (const base of bases) {
+        try {
+          const url =
+            base +
+            "?formatted=false&lang=en-US&region=US" +
+            "&scrIds=" + encodeURIComponent(scrId) +
+            "&count=250&start=0" +
+            "&corsDomain=finance.yahoo.com";
+
+          const response = await fetch(url, {
+            headers: {
+              "User-Agent": "Mozilla/5.0",
+              "Accept": "application/json,text/plain,*/*"
+            }
+          });
+
+          if (!response.ok) {
+            lastError = new Error(scrId + " HTTP " + response.status);
+            continue;
+          }
+
+          const json = await response.json();
+          const quotes = json?.finance?.result?.[0]?.quotes;
+
+          if (Array.isArray(quotes) && quotes.length) return quotes;
+
+          lastError = new Error(scrId + " returned no quotes");
+        } catch (e) {
+          lastError = e;
         }
-      });
+      }
 
-      if (!response.ok) throw new Error(scrId + " HTTP " + response.status);
-
-      const json = await response.json();
-      return json?.finance?.result?.[0]?.quotes || [];
+      throw lastError || new Error(scrId + " failed");
     }
 
     const lists = await Promise.allSettled(screens.map(getScreen));
