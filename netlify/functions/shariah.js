@@ -66,16 +66,11 @@ exports.handler = async (event) => {
     // Companyfacts is still used when available, but it is no longer the only
     // source. Many small/foreign issuers use custom XBRL concepts or put the
     // financial statements in 6-K exhibits.
-    let factsJson = null;
-    try {
-      factsJson = await fetchJson(
-        "https://data.sec.gov/api/xbrl/companyfacts/CIK" + cik + ".json",
-        secHeaders
-      );
-    } catch (_) {}
-
-    const usgaap = factsJson?.facts?.["us-gaap"] || {};
-    const dei = factsJson?.facts?.dei || {};
+    // Keep the function fast and deterministic: use the selected filing text
+    // as the primary source. Companyfacts can be a very large response and
+    // was causing Netlify execution failures on small issuers.
+    const usgaap = {};
+    const dei = {};
 
     const liveMarket = await getCurrentMarketData(symbol);
     const currentPrice = liveMarket?.price ?? await getCurrentPrice(symbol);
@@ -252,7 +247,7 @@ async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
   // Foreign issuers without 10-Q/10-K may put the financial statements in 6-K.
   // Only inspect the newest 6-K submissions, in parallel, to keep execution fast.
   const sixKs = [];
-  for (let i = 0; i < forms.length && sixKs.length < 6; i++) {
+  for (let i = 0; i < forms.length && sixKs.length < 4; i++) {
     if (forms[i] !== "6-K") continue;
     const acc = String(accessions[i] || "");
     if (!acc) continue;
@@ -603,47 +598,40 @@ function latestFactFromFacts(names, primaryFacts, secondaryFacts, filing) {
 }
 
 async function getCurrentMarketData(symbol) {
-  // Nasdaq screener provides a current last-sale price and market-cap field.
-  // Prefer it over SEC share counts because SEC shares can be stale after
-  // reverse splits or later share issuances.
   const headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0",
     "Accept": "application/json,text/plain,*/*",
     "Accept-Language": "en-US,en;q=0.9",
     "Origin": "https://www.nasdaq.com",
     "Referer": "https://www.nasdaq.com/market-activity/stocks/screener"
   };
 
-  for (const exchange of ["NASDAQ", "NYSE", "AMEX"]) {
-    try {
-      const url =
-        "https://api.nasdaq.com/api/screener/stocks" +
-        "?tableonly=true&limit=5000&offset=0&exchange=" +
-        encodeURIComponent(exchange) + "&download=true";
+  // NTCL and CRIS are Nasdaq-listed, so avoid downloading three full
+  // exchange screeners on every request.
+  try {
+    const url =
+      "https://api.nasdaq.com/api/screener/stocks" +
+      "?tableonly=true&limit=5000&offset=0&exchange=NASDAQ&download=true";
 
-      const response = await fetch(url, { headers });
-      if (!response.ok) continue;
-
+    const response = await fetch(url, { headers });
+    if (response.ok) {
       const json = await response.json();
       const rows = Array.isArray(json?.data?.rows) ? json.data.rows : [];
       const q = rows.find(x => String(x.symbol || "").trim().toUpperCase() === symbol);
-      if (!q) continue;
+      if (q) {
+        const price = parseMarketNumber(q.lastsale);
+        const marketCap = parseMarketNumber(q.marketCap);
+        const shares = parseMarketNumber(q.sharesOutstanding ?? q.sharesoutstanding);
+        return {
+          price: Number.isFinite(price) && price > 0 ? price : null,
+          marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
+          shares: Number.isFinite(shares) && shares > 0 ? shares : null,
+          source: "Nasdaq Screener"
+        };
+      }
+    }
+  } catch (_) {}
 
-      const price = parseMarketNumber(q.lastsale);
-      const marketCap = parseMarketNumber(q.marketCap);
-      const shares = parseMarketNumber(q.sharesOutstanding ?? q.sharesoutstanding);
-
-      return {
-        price: Number.isFinite(price) && price > 0 ? price : null,
-        marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
-        shares: Number.isFinite(shares) && shares > 0 ? shares : null,
-        source: "Nasdaq Screener"
-      };
-    } catch (_) {}
-  }
-
-  // Yahoo is only a secondary live source. We do not fall back to SEC share
-  // counts for market capitalization.
   try {
     const url =
       "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
@@ -671,22 +659,6 @@ async function getCurrentMarketData(symbol) {
   } catch (_) {
     return null;
   }
-}
-
-function parseMarketNumber(value) {
-  if (value == null) return NaN;
-  let s = String(value).trim().replace(/[$,\s]/g, "");
-  if (!s) return NaN;
-
-  const suffix = s.slice(-1).toUpperCase();
-  const multipliers = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
-  if (multipliers[suffix]) {
-    const n = Number(s.slice(0, -1));
-    return Number.isFinite(n) ? n * multipliers[suffix] : NaN;
-  }
-
-  const n = Number(s);
-  return Number.isFinite(n) ? n : NaN;
 }
 
 async function getCurrentPrice(symbol) {
