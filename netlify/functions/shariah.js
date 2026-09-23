@@ -812,6 +812,45 @@ function extractCurrentQuarterPositiveIncome(text) {
 function findTotalIncome(text, usgaap, filing) {
   const raw = String(text || "");
 
+  // Primary path: read the current-quarter positive rows directly from the
+  // actual SEC Statement of Operations. Do not use generic "Sales" matching
+  // because "Sales and marketing" is an expense row.
+  const opsSection = getPrimaryOperationsStatementSection(raw);
+  if (opsSection) {
+    const directRows = [
+      { re: /^Sales\s+/im, key: "sales" },
+      { re: /^Revenue(?:s)?\s+/im, key: "revenue" },
+      { re: /^Net Sales\s+/im, key: "netSales" },
+      { re: /^Interest Income(?:,?\s+Net)?\s+/im, key: "interest" },
+      { re: /^Dividend Income\s+/im, key: "dividend" },
+      { re: /^Change in Fair Value of Conversion Option Liability\s+/im, key: "conversion" },
+      { re: /^Change in Fair Value of Warrants? Liabilities?\s+/im, key: "warrants" },
+      { re: /^Change in Fair Value of .* Liability\s+/im, key: "fairValue" },
+      { re: /^Gain (?:on|from)\b/im, key: "gain" }
+    ];
+
+    const components = [];
+    const seen = new Set();
+
+    for (const row of directRows) {
+      const value = findLabeledFinancialValue(opsSection, row.re);
+      if (value != null && value > 0 && !seen.has(value)) {
+        seen.add(value);
+        components.push(value);
+      }
+    }
+
+    if (components.length) {
+      const gross = components.reduce((sum, v) => sum + v, 0);
+      if (gross > 0) {
+        return {
+          value: gross,
+          source: "SEC Statement of Operations — current-quarter gross positive income components"
+        };
+      }
+    }
+  }
+
   // First try the actual Statement of Operations section using row labels.
   // This catches issuers such as FEMY whose SEC table is flattened in a way
   // that can defeat the line-based parser below.
