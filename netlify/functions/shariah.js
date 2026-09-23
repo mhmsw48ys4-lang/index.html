@@ -645,6 +645,46 @@ function extractStatementAmount(text, labelPattern) {
 function extractSecCurrentQuarterIncomeComponents(text) {
   const raw = String(text || "");
 
+  // Robust SEC fallback: parse the first real Operations statement rows by
+  // label even if SEC inserts extra cells, spaces, or missing row newlines.
+  // This avoids relying on the exact HTML-to-text layout.
+  {
+    const title = raw.search(/Condensed (?:Consolidated )?Statements of Operations(?: and Comprehensive (?:Loss|Income))?/i);
+    if (title >= 0) {
+      const section = raw.slice(title, title + 30000);
+      const rowValue = (label) => {
+        const re = new RegExp(
+          "(?:^|\\n)\\s*" + label +
+          "[^\\n]{0,180}?(?:\\|\\s*)+\\$?\\s*(?:\\|\\s*)*([0-9][0-9,]*(?:\\.\\d+)?)",
+          "i"
+        );
+        const m = section.match(re);
+        return m ? parseNumber(m[1]) : null;
+      };
+
+      const components = [];
+      const add = (key, label) => {
+        const value = rowValue(label);
+        if (Number.isFinite(value) && value > 0) components.push({ key, value: Math.abs(value) });
+      };
+
+      add("sales", "Sales");
+      add("interest", "Interest income(?:,\\s*net)?");
+      add("dividend", "Dividend income");
+      add("conversion", "Change in fair value of conversion option liability");
+      add("warrants", "Change in fair value of warrants liabilities?");
+
+      const interest = components.find(x => x.key === "interest")?.value ?? null;
+      if (components.some(x => x.key === "sales") && interest != null) {
+        return {
+          total: components.reduce((sum, x) => sum + x.value, 0),
+          interest,
+          components
+        };
+      }
+    }
+  }
+
   // First parse the cleaned SEC table globally by exact first-cell labels.
   // This is independent of statement-title formatting and works even when
   // SEC HTML inserts empty cells between the label, "$", and amount.
