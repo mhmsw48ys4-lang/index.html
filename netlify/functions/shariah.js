@@ -103,7 +103,7 @@ exports.handler = async function (event) {
       "ConvertibleNotesPayable","ConvertibleDebt","LongTermDebtCurrent",
       "LongTermDebtNoncurrent","LongTermDebt","ShortTermBorrowings",
       "NotesPayable","DebtCurrent","DebtNoncurrent","Debt"
-    ], { balance: true }) || findDebtInRows(filingRows);
+    ], { balance: true }) || findDebtFactByKeywords(facts) || findDebtInRows(filingRows);
 
     const depositsFact = findFact(facts, [
       "InterestBearingDeposits","InterestBearingDepositsAtBanks",
@@ -324,6 +324,56 @@ function findFact(facts, names, options) {
   };
 }
 
+function findDebtFactByKeywords(facts) {
+  const namespaces = facts?.facts || {};
+  const candidates = [];
+
+  for (const [namespace, tags] of Object.entries(namespaces)) {
+    for (const [tagName, tag] of Object.entries(tags || {})) {
+      const n = String(tagName).toLowerCase().replace(/[^a-z0-9]/g, "");
+      const strong =
+        n.includes("convertiblenotespayable") ||
+        n.includes("convertibledebt") ||
+        n.includes("notespayable") ||
+        n.includes("shorttermborrow") ||
+        n.includes("longtermdebt") ||
+        n === "debt" ||
+        n.includes("debtcurrent") ||
+        n.includes("debtnoncurrent");
+
+      if (!strong) continue;
+
+      for (const unitValues of Object.values(tag.units || {})) {
+        for (const item of unitValues || []) {
+          if (!item || item.val == null || item.start) continue;
+          const value = Number(item.val);
+          if (!Number.isFinite(value) || value === 0) continue;
+          candidates.push({
+            value: Math.abs(value),
+            tag: namespace + ":" + tagName,
+            filed: item.filed || "",
+            end: item.end || ""
+          });
+        }
+      }
+    }
+  }
+
+  if (!candidates.length) return null;
+  candidates.sort((a,b) => {
+    const end = String(b.end).localeCompare(String(a.end));
+    return end || String(b.filed).localeCompare(String(a.filed));
+  });
+
+  const chosen = candidates[0];
+  return {
+    value: chosen.value,
+    label: chosen.tag,
+    source: "SEC XBRL keyword fallback — " + chosen.tag +
+      (chosen.end ? " through " + chosen.end : "")
+  };
+}
+
 function isQuarterFact(item) {
   if (!item.start || !item.end) return true;
 
@@ -419,47 +469,76 @@ async function getText(url) {
 }
 
 async function getMarket(symbol) {
+  // Quote can be blocked from some serverless regions; always try chart as fallback.
   try {
     const url =
       "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
       encodeURIComponent(symbol);
 
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json"
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          "Accept": "application/json"
+        }
+      });
+
+      if (res.ok) {
+        const q = (await res.json())?.quoteResponse?.result?.[0];
+        if (q) {
+          const price = Number(q.regularMarketPrice ?? q.postMarketPrice);
+          const marketCap = Number(q.marketCap);
+          const shares = Number(q.sharesOutstanding);
+
+          if (price > 0 || marketCap > 0 || shares > 0) {
+            return {
+              price: Number.isFinite(price) && price > 0 ? price : null,
+              marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
+              shares: Number.isFinite(shares) && shares > 0 ? shares : null,
+              source: "Yahoo Finance"
+            };
+          }
+        }
       }
-    });
+    } catch (_) {}
 
-    if (!res.ok) return null;
+    try {
+      const chart = await fetch(
+        "https://query1.finance.yahoo.com/v8/finance/chart/" +
+          encodeURIComponent(symbol) + "?range=5d&interval=1d",
+        {
+          headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json"
+          }
+        }
+      );
 
-    const q = (await res.json())?.quoteResponse?.result?.[0];
-    if (q) {
-      const price = Number(q.regularMarketPrice ?? q.postMarketPrice);
-      const marketCap = Number(q.marketCap);
-      const shares = Number(q.sharesOutstanding);
-      if (price > 0 || marketCap > 0 || shares > 0) {
-        return {
-          price: Number.isFinite(price) && price > 0 ? price : null,
-          marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
-          shares: Number.isFinite(shares) && shares > 0 ? shares : null,
-          source: "Yahoo Finance"
-        };
+      if (chart.ok) {
+        const result = (await chart.json())?.chart?.result?.[0];
+        const meta = result?.meta;
+        const closes = result?.indicators?.quote?.[0]?.close || [];
+        const lastClose = closes.filter(x => Number.isFinite(Number(x))).slice(-1)[0];
+        const price = Number(
+          meta?.regularMarketPrice ??
+          meta?.postMarketPrice ??
+          meta?.previousClose ??
+          lastClose
+        );
+
+        if (Number.isFinite(price) && price > 0) {
+          return {
+            price,
+            marketCap: null,
+            shares: null,
+            source: "Yahoo Finance chart"
+          };
+        }
       }
-    }
+    } catch (_) {}
+  } catch (_) {}
 
-    const chart = await fetch(
-      "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?range=1d&interval=1m",
-      {headers: {"User-Agent":"Mozilla/5.0","Accept":"application/json"}}
-    );
-    if (!chart.ok) return null;
-    const meta = (await chart.json())?.chart?.result?.[0]?.meta;
-    if (!meta) return null;
-    const price = Number(meta.regularMarketPrice ?? meta.postMarketPrice ?? meta.previousClose);
-    return {price: Number.isFinite(price) && price > 0 ? price : null, marketCap:null, shares:null, source:"Yahoo Finance chart"};
-  } catch (_) {
-    return null;
-  }
+  return null;
 }
 
 async function getJson(url) {
