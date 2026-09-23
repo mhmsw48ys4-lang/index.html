@@ -1864,6 +1864,9 @@ function findAutoBase(rows){
 
   const start=Math.max(1,rows.length-60);
 
+  /* نبحث عن قاع حصل بعد هبوط، ثم ثبت القاع 3 جلسات متتالية.
+     لا نشترط أن يبقى القاع سليماً إلى اليوم الحالي؛ لأن المطلوب
+     هو اكتشاف مرحلة الارتكاز نفسها ثم يفرز المستخدم النتائج يدوياً. */
   for(let i=rows.length-2;i>=start;i--){
     const prev=rows[i-1];
     const cur=rows[i];
@@ -1871,28 +1874,21 @@ function findAutoBase(rows){
 
     if(!(cur.low<=prev.low && cur.low<=next.low)) continue;
 
-    let broken=false;
+    let days=0;
 
     for(let j=i+1;j<rows.length;j++){
-      if(rows[j].low<cur.low){
-        broken=true;
-        break;
+      if(rows[j].low<cur.low) break;
+      days++;
+      if(days>=3){
+        return {
+          pivot:{
+            price:cur.low,
+            date:cur.date,
+            index:i
+          },
+          count:days
+        };
       }
-    }
-
-    if(broken) continue;
-
-    const days=rows.length-1-i;
-
-    if(days>=3){
-      return {
-        pivot:{
-          price:cur.low,
-          date:cur.date,
-          index:i
-        },
-        count:days
-      };
     }
   }
 
