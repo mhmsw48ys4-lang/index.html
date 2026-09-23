@@ -708,45 +708,47 @@ function extractSecCurrentQuarterIncomeComponents(text) {
   };
 }
 function findProhibitedIncome(text, usgaap, filing) {
-  const parsed = extractSecCurrentQuarterIncomeComponents(text);
-  if (parsed?.interest != null) {
-    return {
-      value: Math.abs(parsed.interest),
-      label: "Interest income",
-      source: "SEC Statement of Operations — current quarter"
-    };
+  // For ordinary operating companies, the directly identifiable prohibited
+  // income here is interest income. Read the current-quarter row first.
+  const section=getPrimaryOperationsStatementSection(text);
+  if(section){
+    const lines=section.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+    for(const line of lines){
+      if(!/^Interest income(?:,?\s+net)?\b/i.test(line)) continue;
+      const value=firstFinancialValueAfterLabel(
+        line,
+        /^Interest income(?:,?\s+net)?\b/i
+      );
+      if(value!=null){
+        return {
+          value:Math.abs(value),
+          label:"Interest income",
+          source:"SEC Statement of Operations — current quarter"
+        };
+      }
+    }
   }
 
-  const raw = String(text || "");
-  const attributable = raw.match(
-    /Other income \(expenses\), net,[\s\S]{0,900}?is attributable to[\s\S]{0,500}?interest income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i
+  // Robust fallback for SEC HTML that flattens table rows differently.
+  // Stop at the next financial-statement label so a comparative-period
+  // number elsewhere in the filing cannot be mistaken for the current row.
+  const raw=String(text||"");
+  const m=raw.match(
+    /(?:^|\n|\|)\s*Interest income(?:,?\s+net)?\s*(?:\||:)?\s*\$?\s*\(?([0-9][0-9,]*(?:\.\d+)?)\)?/im
   );
-
-  if (attributable) {
-    const value = parseNumber(attributable[1]);
-    if (Number.isFinite(value)) {
+  if(m){
+    const value=parseNumber(m[1]);
+    if(Number.isFinite(value)){
       return {
-        value: Math.abs(value),
-        label: "Interest income",
-        source: "SEC MD&A — current-quarter interest income"
+        value:Math.abs(value),
+        label:"Interest income",
+        source:"SEC filing — Interest income row"
       };
     }
   }
 
-  const section = getOperationsSection(raw);
-  const value = section
-    ? findLabeledFinancialValue(section, /interest income(?:,?\s+net)?/i)
-    : null;
-
-  return value != null
-    ? {
-        value: Math.abs(value),
-        label: "Interest income",
-        source: "SEC Statement of Operations"
-      }
-    : null;
+  return null;
 }
-
 function extractFlattenedIncomeComponents(text) {
   const raw = String(text || "");
   const labels = [
@@ -869,19 +871,20 @@ function extractCurrentQuarterPositiveIncome(text) {
 }
 
 function findTotalIncome(text, usgaap, filing) {
-  // AAOIFI 3/4/4 denominator: total operating revenue/sales.
-  // Do NOT inflate the denominator with fair-value gains, warrant gains,
-  // conversion-option gains, or other non-revenue accounting movements.
+  // AAOIFI income denominator: current-quarter operating sales/revenue.
+  // Do not use fair-value gains, warrant remeasurement gains, or other
+  // non-operating accounting movements as the denominator.
   const section=getPrimaryOperationsStatementSection(text);
+
   if(section){
     const lines=section.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-    const revenuePatterns=[
+    const patterns=[
       /^Sales\b/i,
-      /^Revenue(?:s)?\b/i,
-      /^Net Sales\b/i
+      /^Net sales\b/i,
+      /^Revenue(?:s)?\b/i
     ];
 
-    for(const pattern of revenuePatterns){
+    for(const pattern of patterns){
       for(const line of lines){
         if(!pattern.test(line)) continue;
         const value=firstFinancialValueAfterLabel(line,pattern);
@@ -895,8 +898,28 @@ function findTotalIncome(text, usgaap, filing) {
     }
   }
 
-  // If the statement format cannot expose a revenue row reliably, do not
-  // substitute total positive accounting gains. Mark the check insufficient.
+  // Robust fallback for flattened SEC tables. Prefer the first Sales/Revenue
+  // row in the selected filing because the selected filing is already the
+  // latest financial filing.
+  const raw=String(text||"");
+  const patterns=[
+    /(?:^|\n|\|)\s*Sales\s*(?:\||:)\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/im,
+    /(?:^|\n|\|)\s*Net sales\s*(?:\||:)\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/im,
+    /(?:^|\n|\|)\s*Revenue(?:s)?\s*(?:\||:)\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/im
+  ];
+
+  for(const re of patterns){
+    const m=raw.match(re);
+    if(!m) continue;
+    const value=parseNumber(m[1]);
+    if(Number.isFinite(value) && value>0){
+      return {
+        value:Math.abs(value),
+        source:"SEC filing — current-quarter sales/revenue row"
+      };
+    }
+  }
+
   return null;
 }
 function findLabeledFinancialValue(text, labelRegex) {
