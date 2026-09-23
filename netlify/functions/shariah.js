@@ -555,16 +555,27 @@ function findInterestTakingDeposits(text, usgaap, filing) {
 
 function getPrimaryOperationsStatementSection(text) {
   const raw = String(text || "");
+  const marker = /(?:condensed (?:consolidated )?)?statements of operations(?: and comprehensive (?:loss|income))?/gi;
+  let m;
 
-  // The caller normally supplies cleaned text. If HTML is still present,
-  // preserve table-row boundaries; SEC financial statements are row-oriented.
-  const marker = /(?:condensed (?:consolidated )?)?statements of operations(?: and comprehensive (?:loss|income))?/i;
-  const start = raw.search(marker);
-  if (start < 0) return null;
+  // SEC filings often mention the statement first in the table of contents.
+  // We must skip that occurrence and select the actual financial table.
+  while ((m = marker.exec(raw))) {
+    const tail = raw.slice(m.index, m.index + 160000);
+    const stop = tail.search(/(?:condensed )?(?:statements of cash flows|statements of comprehensive (?:loss|income)|notes to (?:condensed )?financial statements)/i);
+    const section = stop > 0 ? tail.slice(0, stop) : tail;
 
-  const tail = raw.slice(start);
-  const stop = tail.search(/(?:condensed )?(?:statements of cash flows|statements of comprehensive (?:loss|income)|notes to (?:condensed )?financial statements)/i);
-  return stop > 0 ? tail.slice(0, stop) : tail.slice(0, 120000);
+    const hasPeriodHeader =
+      /three months ended|three and six months ended|quarter ended|months ended/i.test(section);
+    const hasIncomeRows =
+      /(?:^|\n)\s*(?:sales|revenue|net sales|interest income|dividend income)\b/i.test(section);
+    const numberCount =
+      (section.match(/(?:\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?|—|–)/g) || []).length;
+
+    if (hasPeriodHeader && hasIncomeRows && numberCount >= 8) return section;
+  }
+
+  return null;
 }
 
 function extractStatementRowValues(text, labelRegex) {
