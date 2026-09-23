@@ -57,7 +57,7 @@ exports.handler = async (event) => {
           /^[-A-Z0-9.]+$/.test(symbol) &&
           Number.isFinite(price) &&
           price >= 1 &&
-          price <= 10 &&
+          price <= 7 &&
           avgVol >= 200000
         ) {
           map.set(symbol, q);
