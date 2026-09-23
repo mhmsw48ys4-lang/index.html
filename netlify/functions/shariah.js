@@ -437,82 +437,70 @@ function findSharesOutstanding(text, usgaap, dei, filing) {
 }
 
 function findInterestBearingDebt(text, usgaap, filing) {
-  // AAOIFI 3/4/2: count only explicitly interest-bearing loans/debt.
-  // For NTCL and similar filings, the balance-sheet row itself is the
-  // authoritative current-period amount.
-  const convertible = extractLabeledAmount(
-    text,
-    /Convertible (?:notes?|debt)[^\n]{0,120}?\$?\s*([0-9][0-9,]+(?:\.\d+)?)/i
-  );
-  const bankLoan = extractLabeledAmount(
-    text,
-    /Long-term bank loan[\s\S]{0,120}?\$?\s*([0-9][0-9,]+(?:\.\d+)?)/i
-  );
-
-  const explicit = [];
-  if (convertible != null) explicit.push({ label: "Convertible debt", value: convertible });
-  if (bankLoan != null) explicit.push({ label: "Long-term bank loan", value: bankLoan });
-
-  if (explicit.length) {
-    return {
-      value: explicit.reduce((sum, x) => sum + x.value, 0),
-      source: explicit.map(x => x.label + ": $" + x.value.toLocaleString("en-US")).join(" + ")
-    };
-  }
-
-  // Fallback: parse individual financial-statement rows, but never use
-  // total liabilities or generic XBRL debt facts that can represent a
-  // different accounting concept.
+  // AAOIFI 3/4/2: count explicitly interest-bearing debt only.
+  // Parse the actual balance-sheet row first. The first financial number on
+  // the row is the current-period amount; later numbers are comparative data.
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const rowRegex = /^(?:convertible debt|convertible note|long-term bank loan|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?|debt|notes payable)\b/i;
-  const matched = [];
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!rowRegex.test(line)) continue;
+  const debtPatterns = [
+    /^(?:current portion of )?convertible notes? payable\b/i,
+    /^(?:current portion of )?convertible debt\b/i,
+    /^(?:current portion of )?notes payable\b/i,
+    /^(?:current portion of )?bank borrowings?\b/i,
+    /^(?:current portion of )?term loans?\b/i,
+    /^(?:current portion of )?loans payable\b/i,
+    /^(?:current portion of )?long[- ]term borrowings?\b/i,
+    /^(?:current portion of )?short[- ]term borrowings?\b/i,
+    /^senior notes?\b/i,
+    /^interest[- ]bearing debt\b/i
+  ];
 
-    // Generic debt labels are counted only when the filing also identifies
-    // interest/rate information nearby; this avoids counting other liabilities.
-    const nearby = lines.slice(i, Math.min(lines.length, i + 4)).join(" ");
-    const explicitlyInterestBearing =
-      /interest[- ]bearing|interest rate|interest expense|annual rate|coupon/i.test(nearby);
+  const matched=[];
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i];
+    const pattern=debtPatterns.find(re=>re.test(line));
+    if(!pattern) continue;
 
-    if (/^(?:debt|notes payable)\b/i.test(line) && !explicitlyInterestBearing) continue;
+    const value=firstFinancialValueAfterLabel(line,pattern);
+    if(value==null) continue;
 
-    const nums = numbersFromLine(line);
-    if (nums.length) {
-      matched.push({
-        label: line.slice(0, 180),
-        value: Math.abs(nums[0]) * inferLineScale(lines, i)
-      });
-    }
+    matched.push({
+      label:line.slice(0,220),
+      value:Math.abs(value)*inferLineScale(lines,i)
+    });
   }
 
-  if (matched.length) {
+  if(matched.length){
+    // Avoid double-counting the same balance-sheet row.
+    const unique=[];
+    const seen=new Set();
+    for(const item of matched){
+      const key=item.label+"|"+item.value;
+      if(seen.has(key)) continue;
+      seen.add(key);
+      unique.push(item);
+    }
+
     return {
-      value: matched.reduce((sum, x) => sum + x.value, 0),
-      source: matched.map(x => x.label).slice(0, 6).join(" | ")
+      value:unique.reduce((sum,x)=>sum+x.value,0),
+      source:unique.map(x=>x.label).slice(0,6).join(" | ")
     };
   }
 
-  // If the balance sheet explicitly lists its liabilities and none of the
-  // listed liability classes are interest-bearing debt, the AAOIFI debt
-  // numerator is zero. This is different from an undisclosed balance sheet:
-  // we only return zero when the statement is sufficiently complete.
-  const liabilityStart = lines.findIndex(x => /^(?:liabilities|current liabilities)\b/i.test(x));
-  const totalLiabilityIndex = lines.findIndex(x => /^total liabilities\b/i.test(x));
-  if (totalLiabilityIndex >= 0) {
-    const start = liabilityStart >= 0 ? liabilityStart : Math.max(0, totalLiabilityIndex - 20);
-    const liabilityLines = lines.slice(start, totalLiabilityIndex + 1);
-    const debtLike = liabilityLines.some(x =>
-      /^(?:convertible debt|convertible notes? payable|convertible note|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?|debt|notes payable)\b/i.test(x)
+  // If the balance sheet explicitly reaches Total liabilities and contains
+  // no debt-like row, zero is valid. Otherwise the disclosure is insufficient.
+  const totalLiabilityIndex=lines.findIndex(x=>/^total liabilities\b/i.test(x));
+  if(totalLiabilityIndex>=0){
+    const start=Math.max(0,totalLiabilityIndex-80);
+    const liabilityLines=lines.slice(start,totalLiabilityIndex+1);
+    const debtLike=liabilityLines.some(x=>
+      /(?:convertible notes? payable|convertible debt|notes payable|bank borrowings?|term loans?|loans payable|long[- ]term borrowings?|short[- ]term borrowings?|senior notes?|interest[- ]bearing debt)\b/i.test(x)
     );
-    if (!debtLike) {
-      return { value: 0, source: "SEC balance sheet — no interest-bearing debt line disclosed" };
+    if(!debtLike){
+      return {value:0,source:"SEC balance sheet — no interest-bearing debt line disclosed"};
     }
   }
 
-  // Missing or ambiguous disclosure remains insufficient; never guess.
   return null;
 }
 function extractLabeledAmount(text, regex) {
@@ -881,44 +869,36 @@ function extractCurrentQuarterPositiveIncome(text) {
 }
 
 function findTotalIncome(text, usgaap, filing) {
-  const parsed = extractSecCurrentQuarterIncomeComponents(text);
+  // AAOIFI 3/4/4 denominator: total operating revenue/sales.
+  // Do NOT inflate the denominator with fair-value gains, warrant gains,
+  // conversion-option gains, or other non-revenue accounting movements.
+  const section=getPrimaryOperationsStatementSection(text);
+  if(section){
+    const lines=section.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+    const revenuePatterns=[
+      /^Sales\b/i,
+      /^Revenue(?:s)?\b/i,
+      /^Net Sales\b/i
+    ];
 
-  // Authoritative path: once the current-quarter SEC statement is parsed,
-  // never allow a later generic fallback to replace its denominator.
-  if (parsed?.total > 0) {
-    return {
-      value: parsed.total,
-      source: "SEC Statement of Operations — current-quarter gross positive income components",
-      components: parsed.components
-    };
-  }
-
-  // Fallback for filings whose SEC format does not expose a parseable
-  // Statement of Operations table.
-  const raw = String(text || "");
-  const ops = getOperationsSection(raw);
-
-  if (ops && /Interest income, net/i.test(ops) && /Total other income, net/i.test(ops)) {
-    const interest = findLabeledFinancialValue(ops, /Interest income, net/i);
-    if (interest != null && Math.abs(interest) > 0) {
-      return {
-        value: Math.abs(interest),
-        source: "SEC Statement of Operations — current-quarter gross positive income"
-      };
+    for(const pattern of revenuePatterns){
+      for(const line of lines){
+        if(!pattern.test(line)) continue;
+        const value=firstFinancialValueAfterLabel(line,pattern);
+        if(value!=null && value>0){
+          return {
+            value:Math.abs(value),
+            source:"SEC Statement of Operations — current-quarter sales/revenue"
+          };
+        }
+      }
     }
   }
 
-  const statementGross = extractCurrentQuarterPositiveIncome(raw);
-  if (statementGross != null) {
-    return {
-      value: statementGross,
-      source: "SEC current-quarter Statement of Operations"
-    };
-  }
-
+  // If the statement format cannot expose a revenue row reliably, do not
+  // substitute total positive accounting gains. Mark the check insufficient.
   return null;
 }
-
 function findLabeledFinancialValue(text, labelRegex) {
   const raw = String(text || "");
   // Preserve all regex flags (especially m) so row labels anchored with ^
