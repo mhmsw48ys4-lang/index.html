@@ -415,7 +415,7 @@ placeholder="اكتب رمز السهم مثل NTCL">
 </div>
 
 <div class="scannerDesc">
-المسح التلقائي يعرض فقط الأسهم التي لديها تقسيم خلال آخر 100 يوم وسعرها بين $1 و $5. لا يطبق شروط الارتكاز هنا. إذا وجدت سهماً مناسباً، انقله إلى البحث اليدوي لتحليله بنفس شروطك الأصلية.
+المسح التلقائي يعرض فقط الأسهم التي لديها تقسيم خلال آخر 100 يوم وسعرها بين $1 و $10. لا يطبق شروط الارتكاز هنا. إذا وجدت سهماً مناسباً، انقله إلى البحث اليدوي لتحليله بنفس شروطك الأصلية.
 </div>
 
 <button
@@ -1889,7 +1889,7 @@ async function autoScanSplits(){
       try{
         const stock=await getStock(e.symbol);
         const price=Number(stock?.latest?.close);
-        if(isFinite(price) && price>=1 && price<=5){
+        if(isFinite(price) && price>=1 && price<=10){
           priced.push({...e,price});
         }else{
           rejected.push(e.symbol);
@@ -1900,12 +1900,12 @@ async function autoScanSplits(){
     }
 
     if(!priced.length){
-      status.textContent="انتهى المسح — لا توجد تقسيمات ضمن نطاق $1 إلى $5 خلال آخر 100 يوم.";
-      results.innerHTML='<div class="empty">لا توجد أسهم مقسمة ضمن نطاق $1 إلى $5 حسب آخر سعر متاح.</div>';
+      status.textContent="انتهى المسح — لا توجد تقسيمات ضمن نطاق $1 إلى $10 خلال آخر 100 يوم.";
+      results.innerHTML='<div class="empty">لا توجد أسهم مقسمة ضمن نطاق $1 إلى $10 حسب آخر سعر متاح.</div>';
       return;
     }
 
-    status.innerHTML="تم العثور على "+priced.length+" سهم مقسم بين $1 و $5 خلال آخر 100 يوم ✓";
+    status.innerHTML="تم العثور على "+priced.length+" سهم مقسم بين $1 و $10 خلال آخر 100 يوم ✓";
     results.innerHTML=priced.map(renderSplitOnlyCard).join("");
   }catch(error){
     status.innerHTML='<div class="error">تعذر تشغيل مسح التقسيمات: '+escapeHtml(error.message)+'</div>';
