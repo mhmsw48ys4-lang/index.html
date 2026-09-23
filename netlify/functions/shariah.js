@@ -387,7 +387,7 @@ function findInterestBearingDebt(text, usgaap, filing) {
   // Text extraction is necessary for custom concepts/6-K financial statements.
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
   const matched = [];
-  const debtRegex = /(?:bank borrowings|bank borrowing|short[- ]term borrowings|long[- ]term borrowings|borrowings[- ]current|borrowings[- ]non[- ]current|interest[- ]bearing (?:debt|loans|borrowings)|loans payable)/i;
+  const debtRegex = /(?:convertible debt|convertible note|bank borrowings|bank borrowing|short[- ]term borrowings|long[- ]term borrowings|long[- ]term bank loan|borrowings[- ]current|borrowings[- ]non[- ]current|interest[- ]bearing (?:debt|loans|borrowings)|loans payable)/i;
 
   for (const line of lines) {
     if (!debtRegex.test(line)) continue;
@@ -447,18 +447,22 @@ function findInterestTakingDeposits(text, usgaap, filing) {
     return { value: fact.value, source: "SEC XBRL" };
   }
 
-  // No explicit interest-taking deposit disclosed. Ordinary cash is not counted.
-  return { value: 0, source: "لم يُفصح الإفصاح المالي عن ودائع موصوفة بأنها تأخذ فائدة؛ لم يُحتسب النقد العادي" };
+  // No explicit interest-taking deposit disclosed. Ordinary cash is not counted,
+  // but absence of disclosure is not the same as proving the amount is zero.
+  return null;
 }
 
 function findProhibitedIncome(text, usgaap, filing) {
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const regex = /(?:interest income|interest revenue|income from interest|gambling income|alcohol|tobacco|pork|swine)/i;
+  const regex = /(?:interest income|interest revenue|income from interest)/i;
 
   for (const line of lines) {
-    if (!regex.test(line)) continue;
+    // Do not treat "interest expense", "interest expenses, net", or
+    // "net interest income (expense)" as prohibited income. We need an
+    // explicitly reported positive interest-income component.
+    if (!regex.test(line) || /interest expense|interest expenses|net interest income \(expense\)/i.test(line)) continue;
     const nums = numbersFromLine(line);
-    if (nums.length && /interest income|interest revenue|income from interest/i.test(line)) {
+    if (nums.length) {
       return {
         value: Math.abs(nums[0]),
         label: "Interest income",
