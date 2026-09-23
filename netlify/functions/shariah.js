@@ -654,6 +654,36 @@ function findTotalIncome(text, usgaap, filing) {
     }
   }
 
+  // Generic current-quarter statement extraction. Many SEC 10-Q tables put
+  // current quarter, prior quarter, six-month and prior six-month values on
+  // the same flattened line. Reading the first value after each explicit
+  // current-quarter row label avoids accidentally using a prior-period value.
+  const statementPositiveLabels = [
+    /^(?:sales|revenue|revenues|net sales)/i,
+    /^interest income(?:,?\s+net)?/i,
+    /^dividend income/i,
+    /^change in fair value of conversion option liability/i,
+    /^change in fair value of warrants? liabilities?/i,
+    /^change in fair value of .* liability/i,
+    /^gain on/i,
+    /^gain from/i
+  ];
+
+  if (ops && /Other income \(expense\)/i.test(ops) && /Total other income \(expense\),? net/i.test(ops)) {
+    const positive = [];
+    for (const label of statementPositiveLabels) {
+      const v = findLabeledFinancialValue(ops, label);
+      if (v != null && v > 0 && !positive.includes(v)) positive.push(v);
+    }
+    const statementTotal = positive.reduce((sum, v) => sum + v, 0);
+    if (statementTotal > 0) {
+      return {
+        value: statementTotal,
+        source: "SEC Statement of Operations — current-quarter gross positive income components"
+      };
+    }
+  }
+
   // First, extract the current-quarter PMCB-style statement rows directly.
   // These rows are unambiguous in the SEC 10-Q and avoid HTML/table flattening.
   const currentRows = [
