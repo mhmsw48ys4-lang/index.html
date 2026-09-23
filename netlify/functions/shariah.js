@@ -637,7 +637,7 @@ function findTotalIncome(text, usgaap, filing) {
     const part = matches[matches.length - 1];
     const positiveLabels = [
       /interest income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
-      /dividend income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
+      /dividend income(?: from [^$0-9]{0,100})?(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
       /change in fair value of warrant liability(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
       /change in fair value of derivative liability(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
       /gain on legal settlement(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i
