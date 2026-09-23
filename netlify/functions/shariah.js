@@ -240,7 +240,7 @@ async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
 
   // Foreign private issuers: inspect recent 6-K submissions and choose the
   // newest one that actually contains financial statements.
-  for (let i = 0; i < Math.min(forms.length, 40); i++) {
+  for (let i = 0; i < Math.min(forms.length, 12); i++) {
     if (forms[i] !== "6-K") continue;
     const acc = String(accessions[i] || "");
     if (!acc) continue;
