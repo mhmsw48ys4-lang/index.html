@@ -442,7 +442,7 @@ function findInterestBearingDebt(text, usgaap, filing) {
   // authoritative current-period amount.
   const convertible = extractLabeledAmount(
     text,
-    /Convertible debt[\s\S]{0,120}?\$?\s*([0-9][0-9,]+(?:\.\d+)?)/i
+    /Convertible (?:notes?|debt)[^\n]{0,120}?\$?\s*([0-9][0-9,]+(?:\.\d+)?)/i
   );
   const bankLoan = extractLabeledAmount(
     text,
@@ -505,7 +505,7 @@ function findInterestBearingDebt(text, usgaap, filing) {
     const start = liabilityStart >= 0 ? liabilityStart : Math.max(0, totalLiabilityIndex - 20);
     const liabilityLines = lines.slice(start, totalLiabilityIndex + 1);
     const debtLike = liabilityLines.some(x =>
-      /^(?:convertible debt|convertible note|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?|debt|notes payable)\b/i.test(x)
+      /^(?:convertible debt|convertible notes? payable|convertible note|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?|debt|notes payable)\b/i.test(x)
     );
     if (!debtLike) {
       return { value: 0, source: "SEC balance sheet — no interest-bearing debt line disclosed" };
