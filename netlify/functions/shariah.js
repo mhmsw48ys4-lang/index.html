@@ -261,23 +261,32 @@ function getDebt(facts, rows, filing) {
 }
 
 function getDeposits(facts, rows, filing) {
-  // Count only instruments that are explicitly identifiable as
-  // interest-bearing deposits / money-market instruments.
-  // Do not count ordinary cash or generic marketable securities.
+  // AAOIFI 21: the relevant test is interest-taking deposits.
+  // For SEC filings, count an amount only when the filing explicitly
+  // identifies it as an interest-bearing deposit/instrument or a
+  // money-market holding. Never turn an unrelated XBRL fact into 0%.
   const patterns = [
     /^interest[- ]bearing\s+(deposits?|securities|investments?)$/i,
-    /^money\s+market\s+(mutual\s+)?funds?$/i
+    /^money\s+market\s+(mutual\s+)?funds?$/i,
+    /^money\s+market\s+securities$/i
   ];
 
-  for (const r of rows) {
-    if (!r.values.length) continue;
-    if (patterns.some(re => re.test(r.label))) {
-      return {
-        value: Math.abs(r.values[0]),
-        label: r.label,
-        source: "SEC filing — explicit interest-bearing / money-market instrument"
-      };
-    }
+  const matches = rows.filter(r =>
+    r.values.length && patterns.some(re => re.test(r.label))
+  );
+
+  if (matches.length) {
+    // Avoid double-counting the same balance when the filing presents
+    // both a parent total and its underlying money-market line.
+    const preferred = matches.find(r =>
+      /^money\s+market\s+(mutual\s+)?funds?$/i.test(r.label)
+    ) || matches[0];
+
+    return {
+      value: Math.abs(preferred.values[0]),
+      label: preferred.label,
+      source: "SEC filing — explicitly disclosed interest-taking / money-market holding"
+    };
   }
 
   const names = [
@@ -289,26 +298,17 @@ function getDeposits(facts, rows, filing) {
 }
 
 function getInterest(facts, rows) {
-  // Preferred: a separately disclosed interest-income line.
+  // AAOIFI's 5% test needs the prohibited-income amount itself.
+  // A composite line such as "financing income, net" is NOT treated as
+  // interest income, because it may contain non-interest components.
+  // If the filing does not separately disclose interest income, return
+  // insufficient rather than inventing or over-counting the numerator.
   for (const r of rows) {
     if (/^interest\s+income(?:,\s*net)?$/i.test(r.label) && r.values.length) {
       return {
         value: Math.abs(r.values[0]),
         label: r.label,
         source: "SEC filing — standalone interest income"
-      };
-    }
-  }
-
-  // Conservative fallback: some companies report interest inside a
-  // financing-income line. Do not pretend it is an exact interest figure;
-  // use it as a disclosed financing-income upper bound for the 5% screen.
-  for (const r of rows) {
-    if (/^financing\s+income(?:,\s*net)?$/i.test(r.label) && r.values.length) {
-      return {
-        value: Math.abs(r.values[0]),
-        label: r.label + " (conservative upper bound)",
-        source: "SEC filing — financing income; interest not separately disclosed"
       };
     }
   }
