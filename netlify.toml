@@ -1,7 +1,7 @@
 [build]
-  command = "echo Build complete"
+  command = "node -e \"console.log('Static site build complete')\""
   publish = "."
 
 [functions]
   directory = "netlify/functions"
-  node_bundler = "zisi"
+  node_bundler = "esbuild"
