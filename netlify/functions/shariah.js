@@ -372,20 +372,20 @@ function findSharesOutstanding(text, usgaap, dei, filing) {
 }
 
 function findInterestBearingDebt(text, usgaap, filing) {
-  // First read clearly labelled interest-bearing debt rows. The SEC HTML
-  // tables do not always preserve line starts, so allow table separators/text
-  // between the label and the current-period amount.
-  const currentConvertible = extractLabeledAmount(
+  // AAOIFI 3/4/2: count only explicitly interest-bearing loans/debt.
+  // For NTCL and similar filings, the balance-sheet row itself is the
+  // authoritative current-period amount.
+  const convertible = extractLabeledAmount(
     text,
-    /Convertible debt[\s\S]{0,220}?\$?\s*([0-9][0-9,]*(?:\.\\d+)?)/i
+    /Convertible debt[\\s\\S]{0,120}?\\$?\\s*([0-9][0-9,]+(?:\\.\\d+)?)/i
   );
   const bankLoan = extractLabeledAmount(
     text,
-    /Long-term bank loan[\s\S]{0,220}?\$?\s*([0-9][0-9,]*(?:\.\\d+)?)/i
+    /Long-term bank loan[\\s\\S]{0,120}?\\$?\\s*([0-9][0-9,]+(?:\\.\\d+)?)/i
   );
 
   const explicit = [];
-  if (currentConvertible != null) explicit.push({ label: "Convertible debt", value: currentConvertible });
+  if (convertible != null) explicit.push({ label: "Convertible debt", value: convertible });
   if (bankLoan != null) explicit.push({ label: "Long-term bank loan", value: bankLoan });
 
   if (explicit.length) {
@@ -395,27 +395,30 @@ function findInterestBearingDebt(text, usgaap, filing) {
     };
   }
 
-  const fact = latestFactFromFacts([
-    "LongTermDebtCurrent","LongTermDebtNoncurrent","LongTermDebt","ShortTermBorrowings",
-    "ShortTermDebt","LongTermBorrowingsCurrent","LongTermBorrowingsNoncurrent"
-  ], usgaap, {}, filing);
-  if (fact?.value != null) return { value: fact.value, source: "SEC XBRL" };
+  // Fallback: parse individual financial-statement rows, but never use
+  // total liabilities or generic XBRL debt facts that can represent a
+  // different accounting concept.
+  const lines = text.split(/\\r?\\n/).map(normalizeLine).filter(Boolean);
+  const rowRegex = /^(?:convertible debt|convertible note|long-term bank loan|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?)\\b/i;
+  const matched = [];
 
-  // If the balance sheet contains no borrowing/debt item and the cash-flow
-  // statement reports no cash paid for interest, treat interest-bearing debt
-  // as zero. This is different from treating ordinary cash as an interest
-  // deposit; it is based on the issuer's own financial statements.
-  const hasDebtLabel = /(?:convertible debt|notes? payable|bank loan|bank borrowings|borrowings|interest[- ]bearing debt|loans payable|term loan|senior notes?)/i.test(text);
-  const noInterestPaid = /cash paid for interest[\s\S]{0,120}?(?:\$?\s*[—–-]|0(?:\.0+)?)/i.test(text);
-  const hasBalanceSheet = /condensed consolidated balance sheets|consolidated balance sheets/i.test(text);
-
-  if (hasBalanceSheet && !hasDebtLabel && noInterestPaid) {
-    return { value: 0, source: "لا يوجد دين قائم على الفائدة ظاهر في القوائم المالية" };
+  for (const line of lines) {
+    if (!rowRegex.test(line)) continue;
+    const nums = numbersFromLine(line);
+    if (nums.length) matched.push({ label: line.slice(0, 180), value: Math.abs(nums[0]) });
   }
 
+  if (matched.length) {
+    return {
+      value: matched.reduce((sum, x) => sum + x.value, 0),
+      source: matched.map(x => x.label).slice(0, 6).join(" | ")
+    };
+  }
+
+  // If there is a clear balance sheet but no debt/loan row, do not invent a
+  // number. Missing disclosure remains "insufficient data".
   return null;
 }
-
 function extractLabeledAmount(text, regex) {
   const m = String(text || "").match(regex);
   if (!m) return null;
