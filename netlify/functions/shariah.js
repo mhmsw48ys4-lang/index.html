@@ -730,14 +730,16 @@ function extractFlattenedIncomeComponents(text) {
 }
 
 function extractCurrentQuarterGrossPositiveIncome(text) {
+  // normalizeLine() removes the "|" table separators, so these patterns
+  // deliberately match the normalized row text.
   const rowLabels = [
-    /^Sales\s+(?:\$|[0-9(])/i,
-    /^(?:Revenue(?:s)?|Net Sales)\s+(?:\$|[0-9(])/i,
-    /^Interest Income(?:,?\s+Net)?\s+(?:\$|[0-9(])/i,
-    /^Dividend Income\s+(?:\$|[0-9(])/i,
-    /^Change in Fair Value of Conversion Option Liability\s+(?:\$|[0-9(])/i,
-    /^Change in Fair Value of Warrants? Liabilities?\s+(?:\$|[0-9(])/i,
-    /^Change in Fair Value of .* Liability\s+(?:\$|[0-9(])/i,
+    /^Sales(?!\s+and\s+marketing)\b/i,
+    /^(?:Revenue(?:s)?|Net Sales)\b/i,
+    /^Interest Income(?:,?\s+Net)?\b/i,
+    /^Dividend Income\b/i,
+    /^Change in Fair Value of Conversion Option Liability\b/i,
+    /^Change in Fair Value of Warrants? Liabilities?\b/i,
+    /^Change in Fair Value of .* Liability\b/i,
     /^Gain (?:on|from)\b/i
   ];
 
@@ -751,15 +753,17 @@ function extractCurrentQuarterGrossPositiveIncome(text) {
     for (const label of rowLabels) {
       if (!label.test(line)) continue;
 
-      // cleanText preserves SEC table cells; normalizeLine turns separators
-      // into spaces. The first numeric token after the row label is the
-      // current-quarter value.
+      // The first financial number after the exact row label is the
+      // current-quarter column because SEC table cells are preserved
+      // before normalization and remain in column order.
       const after = line.replace(label, " ");
       const nums = after.match(/\(?[0-9][0-9,]*(?:\.\d+)?\)?/g) || [];
 
       if (nums.length) {
         const n = Math.abs(parseNumber(nums[0]));
-        if (Number.isFinite(n) && n > 0 && !values.includes(n)) values.push(n);
+        if (Number.isFinite(n) && n > 0 && !values.includes(n)) {
+          values.push(n);
+        }
       }
       break;
     }
