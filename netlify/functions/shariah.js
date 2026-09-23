@@ -543,7 +543,10 @@ function findInterestTakingDeposits(text, usgaap, filing) {
 }
 
 function findProhibitedIncome(text, usgaap, filing) {
-  const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  // Use the same Statement of Operations section as the denominator so the
+  // numerator and denominator always refer to the same reporting period.
+  const section = getOperationsSection(text);
+  const lines = section.split(/\r?\n/).map(normalizeLine).filter(Boolean);
   const regex = /(?:^|\s)(?:interest income|interest revenue|income from interest)(?:\s|,|$)/i;
 
   for (let i = 0; i < lines.length; i++) {
@@ -577,17 +580,33 @@ function findProhibitedIncome(text, usgaap, filing) {
   return null;
 }
 
+function getOperationsSection(text) {
+  const raw = String(text || "");
+
+  // SEC filings often mention "Statements of Operations" in the table of
+  // contents before the real statement. Pick the LAST statement heading
+  // before Item 2 so we land on the actual financial statement, not the TOC.
+  const item2 = raw.search(/\bitem\s+2\b/i);
+  const limit = item2 >= 0 ? item2 : raw.length;
+  const beforeItem2 = raw.slice(0, limit);
+
+  const marker = /(?:condensed consolidated )?(?:statements of operations|statements of income|statements of earnings)/gi;
+  let match;
+  let lastIndex = -1;
+  while ((match = marker.exec(beforeItem2))) lastIndex = match.index;
+
+  if (lastIndex < 0) return raw.slice(0, 250000);
+
+  const tail = raw.slice(lastIndex);
+  const stop = tail.search(/see accompanying notes to condensed consolidated financial statements|statements of comprehensive (?:loss|income)|\bitem\s+2\b/i);
+  return stop > 0 ? tail.slice(0, stop) : tail.slice(0, 250000);
+}
+
 function findTotalIncome(text, usgaap, filing) {
   // Restrict the denominator to the actual current-period Statement of
   // Operations. Searching the whole filing can accidentally pick numbers
   // from MD&A, notes, or the prior-year column.
-  const raw = String(text || "");
-  const marker = /(?:condensed consolidated )?(?:statements of operations|statements of income|statements of earnings)/i;
-  const m = marker.exec(raw);
-  const sectionStart = m ? m.index : 0;
-  const tail = raw.slice(sectionStart);
-  const stop = tail.search(/see accompanying notes to condensed consolidated financial statements|statements of comprehensive (?:loss|income)|item 2\./i);
-  const section = stop > 0 ? tail.slice(0, stop) : tail.slice(0, 250000);
+  const section = getOperationsSection(text);
   const lines = section.split(/\r?\n/).map(normalizeLine).filter(Boolean);
 
   const revenueRegex = /^(?:revenue|revenues|revenue,? net|total revenue|net sales|sales revenue|operating revenue)\b/i;
