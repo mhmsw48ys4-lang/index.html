@@ -579,45 +579,18 @@ function findProhibitedIncome(text, usgaap, filing) {
   const sources = [section, text].filter(Boolean);
 
   for (const sourceText of sources) {
-    const lines = sourceText.split(/\\r?\\n/).map(normalizeLine).filter(Boolean);
-    const regex = /(?:^|\\s)interest income(?:,?\\s+net)?(?:\\s|,|$)/i;
+    const value = findLabeledFinancialValue(
+      sourceText,
+      /interest income(?:,?\s+net)?/i
+    );
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (!regex.test(line) || /interest expense|interest expenses|net interest income \\(expense\\)/i.test(line)) continue;
-      const value = firstFinancialValueAfterLabel(line, regex);
-      if (value != null) {
-        return {
-          value: Math.abs(value),
-          label: "Interest income",
-          source: line.slice(0, 220)
-        };
-      }
-    }
-
-    const direct = extractStatementAmount(sourceText, "interest income(?:,?\\s+net)?");
-    if (direct != null) {
+    if (value != null) {
       return {
-        value: direct,
+        value: Math.abs(value),
         label: "Interest income",
         source: "SEC Statement of Operations"
       };
     }
-  }
-
-  const fact = latestFactFromFacts([
-    "InterestIncomeNonOperating",
-    "InterestIncomeExpenseNonOperatingNet",
-    "InvestmentIncomeInterest",
-    "InterestIncomeExpenseNonOperating"
-  ], usgaap, {}, filing);
-
-  if (fact?.value != null) {
-    return {
-      value: Math.abs(fact.value),
-      label: fact.tag,
-      source: "SEC XBRL"
-    };
   }
 
   return null;
@@ -626,81 +599,80 @@ function findProhibitedIncome(text, usgaap, filing) {
 function findTotalIncome(text, usgaap, filing) {
   const section = getOperationsSection(text);
   const source = section || text;
-  const lines = source.split(/\\r?\\n/).map(normalizeLine).filter(Boolean);
+  const lines = source.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  const components = [];
 
-  const revenueRegex = /^(?:revenue|revenues|revenue,? net|total revenue|net sales|sales revenue|operating revenue)\\b/i;
-  const interestRegex = /^(?:interest income|interest revenue|income from interest)(?:,?\\s+net)?(?:\\s|,|$)/i;
-
-  let revenue = null;
-  let interestIncome = null;
-  let otherIncome = 0;
+  const labels = [
+    /^(?:revenue|revenues|revenue,? net|total revenue|net sales|sales revenue|operating revenue)/i,
+    /^interest income(?:,?\s+net)?/i,
+    /^dividend income/i,
+    /^gain on/i,
+    /^gain from/i,
+    /^gain in/i,
+    /^change in fair value of .* liability/i,
+    /^change in fair value of .* asset/i,
+    /^income from/i,
+    /^other income/i
+  ];
 
   for (const line of lines) {
-    if (revenue == null && revenueRegex.test(line)) {
-      const v = firstFinancialValueAfterLabel(line, revenueRegex);
-      if (v != null) revenue = Math.max(0, v);
-      continue;
-    }
-
-    if (interestIncome == null && interestRegex.test(line) &&
-        !/interest expense|interest expenses/i.test(line)) {
-      const v = firstFinancialValueAfterLabel(line, interestRegex);
-      if (v != null) interestIncome = Math.max(0, v);
-      continue;
-    }
-
-    const incomeRow =
-      /^(?:dividend income|gain on|gain from|gain in|change in fair value of .* liability|change in fair value of .* asset|income from|other income)\\b/i;
-
-    if (incomeRow.test(line) &&
-        !/expense|expenses|loss|decrease|decreases/i.test(line)) {
-      const v = firstFinancialValueAfterLabel(line, incomeRow);
-      if (v != null && v > 0) otherIncome += v;
-    }
-  }
-
-  // Robust fallback for SEC HTML where table cells are flattened onto one line.
-  if (interestIncome == null) {
-    const v = extractStatementAmount(source, "interest income(?:,?\\s+net)?");
-    if (v != null) interestIncome = v;
-  }
-
-  if (otherIncome === 0) {
-    const labels = [
-      "dividend income",
-      "change in fair value of warrant liability",
-      "change in fair value of derivative liability",
-      "gain on legal settlement",
-      "income from"
-    ];
     for (const label of labels) {
-      const v = extractStatementAmount(source, label);
-      if (v != null && v > 0) otherIncome += v;
+      if (!label.test(line)) continue;
+      const v = firstFinancialValueAfterLabel(line, label);
+      if (v != null && v > 0) components.push(v);
+      break;
     }
   }
 
-  const components = [revenue, interestIncome, otherIncome]
-    .filter(v => v != null && Number.isFinite(v) && v > 0);
-  const total = components.reduce((sum, v) => sum + v, 0);
+  // Fallback for flattened SEC HTML tables where the row boundaries are lost.
+  const directLabels = [
+    /revenue(?:,? net)?/i,
+    /interest income(?:,?\s+net)?/i,
+    /dividend income/i,
+    /gain on/i,
+    /gain from/i,
+    /gain in/i,
+    /change in fair value of [^\n]{0,100}(?:liability|asset)/i,
+    /income from/i,
+    /other income/i
+  ];
 
-  if (total > 0) {
-    return {
-      value: total,
-      source: "SEC Statement of Operations — gross positive income components"
-    };
+  const seen = [];
+  for (const label of directLabels) {
+    const v = findLabeledFinancialValue(source, label);
+    if (v != null && v > 0 && !seen.includes(v)) seen.push(v);
   }
 
-  const fact = latestFactFromFacts([
-    "RevenueFromContractWithCustomerExcludingAssessedTax",
-    "Revenues",
-    "SalesRevenueNet",
-    "SalesRevenueGoodsNet",
-    "SalesRevenueServicesNet"
-  ], usgaap, {}, filing);
+  const all = components.concat(seen);
+  const total = all.reduce((sum, v) => sum + v, 0);
 
-  return fact?.value != null && Math.abs(fact.value) > 0
-    ? { value: Math.abs(fact.value), source: "SEC XBRL" }
+  return total > 0
+    ? {
+        value: total,
+        source: "SEC Statement of Operations — gross positive income components"
+      }
     : null;
+}
+
+function findLabeledFinancialValue(text, labelRegex) {
+  const raw = String(text || "");
+  const re = new RegExp(labelRegex.source + "[\\s\\S]{0,260}", labelRegex.flags.includes("i") ? labelRegex.flags : labelRegex.flags + "i");
+  const m = raw.match(re);
+  if (!m) return null;
+
+  const labelMatch = m[0].match(labelRegex);
+  if (!labelMatch) return null;
+
+  const tail = m[0].slice(labelMatch.index + labelMatch[0].length);
+  const tokens = tail.match(/(?:—|–|\\$?\\s*\\(?[0-9][0-9,]*(?:\\.\\d+)?\\)?)/g) || [];
+
+  for (const token of tokens) {
+    const t = String(token).trim();
+    if (t === "—" || t === "–") return 0;
+    const n = parseNumber(t);
+    if (Number.isFinite(n)) return Math.abs(n);
+  }
+  return null;
 }
 
 function firstFinancialValueAfterLabel(line, labelRegex) {
