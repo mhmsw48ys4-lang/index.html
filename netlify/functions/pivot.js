@@ -13,9 +13,11 @@ exports.handler = async (event) => {
     // نجمع أكثر من قائمة حتى لا نعتمد على قائمة واحدة فقط.
     const screens = [
       "most_actives",
+      "most_shorted_stocks",
+      "aggressive_small_caps",
+      "small_cap_gainers",
       "day_gainers",
-      "day_losers",
-      "small_cap_gainers"
+      "day_losers"
     ];
 
     async function getScreen(scrId) {
@@ -23,7 +25,7 @@ exports.handler = async (event) => {
         "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved" +
         "?formatted=false&lang=en-US&region=US" +
         "&scrIds=" + encodeURIComponent(scrId) +
-        "&count=100&start=0" +
+        "&count=250&start=0" +
         "&corsDomain=finance.yahoo.com";
 
       const response = await fetch(url, {
