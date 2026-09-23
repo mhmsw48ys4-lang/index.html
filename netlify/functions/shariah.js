@@ -377,11 +377,11 @@ function findInterestBearingDebt(text, usgaap, filing) {
   // between the label and the current-period amount.
   const currentConvertible = extractLabeledAmount(
     text,
-    /Convertible debt[\s\S]{0,220}?\\$?\s*([0-9][0-9,]*(?:\\.\\d+)?)/i
+    /Convertible debt[\s\S]{0,220}?\$?\s*([0-9][0-9,]*(?:\.\\d+)?)/i
   );
   const bankLoan = extractLabeledAmount(
     text,
-    /Long-term bank loan[\s\S]{0,220}?\\$?\s*([0-9][0-9,]*(?:\\.\\d+)?)/i
+    /Long-term bank loan[\s\S]{0,220}?\$?\s*([0-9][0-9,]*(?:\.\\d+)?)/i
   );
 
   const explicit = [];
@@ -406,7 +406,7 @@ function findInterestBearingDebt(text, usgaap, filing) {
   // as zero. This is different from treating ordinary cash as an interest
   // deposit; it is based on the issuer's own financial statements.
   const hasDebtLabel = /(?:convertible debt|notes? payable|bank loan|bank borrowings|borrowings|interest[- ]bearing debt|loans payable|term loan|senior notes?)/i.test(text);
-  const noInterestPaid = /cash paid for interest[\s\S]{0,120}?(?:\\$?\s*[—–-]|0(?:\\.0+)?)/i.test(text);
+  const noInterestPaid = /cash paid for interest[\s\S]{0,120}?(?:\$?\s*[—–-]|0(?:\.0+)?)/i.test(text);
   const hasBalanceSheet = /condensed consolidated balance sheets|consolidated balance sheets/i.test(text);
 
   if (hasBalanceSheet && !hasDebtLabel && noInterestPaid) {
