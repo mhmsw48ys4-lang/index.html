@@ -643,6 +643,8 @@ function extractStatementAmount(text, labelPattern) {
 
 
 function extractSecCurrentQuarterIncomeComponents(text) {
+  const raw = String(text || "");
+
   // First parse the cleaned SEC table globally by exact first-cell labels.
   // This is independent of statement-title formatting and works even when
   // SEC HTML inserts empty cells between the label, "$", and amount.
@@ -688,8 +690,6 @@ function extractSecCurrentQuarterIncomeComponents(text) {
       };
     }
   }
-
-  const raw = String(text || "");
 
   // The SEC cleaner preserves table cells with "|" and rows with newlines.
   // Parse the actual Statement of Operations cell-by-cell so the first
