@@ -135,27 +135,50 @@ exports.handler = async function (event) {
       ? deposits.value / marketCap * 100
       : null;
 
-    const prohibitedRatio =
-      interest?.value != null &&
-      sales?.value > 0
-        ? interest.value / sales.value * 100
+    // AAOIFI SS21: prohibited-component income must be compared with
+    // TOTAL income, and if the source is not properly disclosed we must
+    // exercise due care rather than assume the missing amount is zero.
+    const totalIncome =
+      findFact(facts, [
+        "Revenue","Revenues","SalesRevenueNet",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperations"
+      ], { flow: true, quarter: true }) ||
+      findTotalIncomeInRows(filingRows) ||
+      sales;
+
+    const prohibitedComponents = findProhibitedIncomeComponents(
+      facts,
+      filingRows,
+      interest
+    );
+
+    const prohibitedNumerator =
+      prohibitedComponents.length
+        ? prohibitedComponents.reduce((sum, x) => sum + x.value, 0)
         : null;
 
-    // If the filing contains operating data but no interest-income fact,
-    // use zero rather than leaving the check blank.
-    const interestCheck = interest
-      ? {
-          value: interest.value,
-          label: interest.label,
-          source: interest.source
-        }
-      : sales
-        ? {
-            value: 0,
-            label: "لا يوجد بند Interest income في حقائق XBRL",
-            source: "SEC XBRL companyfacts"
-          }
+    const prohibitedRatio =
+      prohibitedNumerator != null &&
+      totalIncome?.value > 0
+        ? prohibitedNumerator / totalIncome.value * 100
         : null;
+
+    // We only allow a definitive pass/fail when the filing explicitly
+    // provides enough information to identify the prohibited-income
+    // components. Missing disclosure is NOT treated as zero.
+    const prohibitedIncomeComplete =
+      prohibitedComponents.length > 0 &&
+      !!totalIncome &&
+      prohibitedComponents.every(x => x.explicit === true);
+
+    const interestCheck = prohibitedComponents.length
+      ? {
+          value: prohibitedNumerator,
+          label: prohibitedComponents.map(x => x.label).join(" + "),
+          source: prohibitedComponents.map(x => x.source).join(" | ")
+        }
+      : null;
 
     const checks = {
       debt: {
@@ -179,9 +202,12 @@ exports.handler = async function (event) {
         denominator: sales?.value ?? null,
         ratio: prohibitedRatio,
         limit: 5,
-        pass: prohibitedRatio == null ? null : prohibitedRatio <= 5,
+        pass: !prohibitedIncomeComplete
+          ? null
+          : (prohibitedRatio == null ? null : prohibitedRatio <= 5),
         source: interestCheck?.source || null,
-        incomeSource: interestCheck?.label || null
+        incomeSource: interestCheck?.label || null,
+        dataComplete: prohibitedIncomeComplete
       }
     };
 
@@ -452,6 +478,66 @@ function findInterestInRows(rows) {
       return {value: Math.abs(row.values[0]), label: row.label, source: "SEC filing Statement of Operations"};
   }
   return null;
+}
+
+function findTotalIncomeInRows(rows) {
+  const patterns = [
+    /^total\s+income$/i,
+    /^total\s+revenues?$/i,
+    /^total\s+revenue$/i
+  ];
+  for (const row of rows) {
+    if (patterns.some(re => re.test(row.label)) && row.values.length) {
+      return {
+        value: Math.abs(row.values[0]),
+        label: row.label,
+        source: "SEC filing Statement of Operations"
+      };
+    }
+  }
+  return null;
+}
+
+function findProhibitedIncomeComponents(facts, rows, interestFact) {
+  const found = [];
+
+  if (interestFact?.value != null) {
+    found.push({
+      value: Math.abs(interestFact.value),
+      label: interestFact.label || "Interest income",
+      source: interestFact.source || "SEC XBRL",
+      explicit: true
+    });
+  } else {
+    for (const row of rows) {
+      if (/^interest\s+income(?:,?\s+net)?$/i.test(row.label) && row.values.length) {
+        found.push({
+          value: Math.abs(row.values[0]),
+          label: row.label,
+          source: "SEC filing Statement of Operations",
+          explicit: true
+        });
+        break;
+      }
+    }
+  }
+
+  // Only add other income when the filing explicitly identifies it as
+  // prohibited. Do not classify generic gains, derivatives or fair-value
+  // changes as prohibited without an explicit disclosure.
+  for (const row of rows) {
+    if (!row.values.length) continue;
+    if (/(?:prohibited|haram|alcohol|gambling|tobacco|pork|adult\s+entertainment)/i.test(row.label)) {
+      found.push({
+        value: Math.abs(row.values[0]),
+        label: row.label,
+        source: "SEC filing Statement of Operations",
+        explicit: true
+      });
+    }
+  }
+
+  return found;
 }
 
 function findSalesInRows(rows) {
