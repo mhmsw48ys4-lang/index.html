@@ -725,7 +725,19 @@ function findTotalIncome(text, usgaap, filing) {
   }
 
   const all = components.concat(seen);
-  const total = all.reduce((sum, v) => sum + v, 0);
+  let total = all.reduce((sum, v) => sum + v, 0);
+
+  // Never allow a smaller unrelated number (for example a flattened
+  // "income from ..." row) to become the denominator when explicit interest
+  // income is present. The prohibited-income component itself is part of
+  // total income and therefore the denominator cannot be below it.
+  const interestForFloor = findLabeledFinancialValue(
+    source,
+    /interest income(?:,?\s+net)?/i
+  );
+  if (interestForFloor != null && interestForFloor > total) {
+    total = interestForFloor;
+  }
 
   return total > 0
     ? {
