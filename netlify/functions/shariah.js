@@ -1,3 +1,12 @@
+// Top-level response helper. Keep this outside the handler so every execution path can use it.
+function send(statusCode, body, headers) {
+  return {
+    statusCode,
+    headers,
+    body: JSON.stringify(body)
+  };
+}
+
 exports.handler = async (event) => {
   const headers = {
     "Access-Control-Allow-Origin": "*",
@@ -998,42 +1007,3 @@ function firstFinancialValueAfterLabel(line, labelRegex) {
     if (Number.isFinite(n)) return n;
   }
   return null;
-}
-
-function inferLineScale(lines, index) {
-  const start = Math.max(0, index - 40);
-  for (let i = index; i >= start; i--) {
-    if (/\bin thousands\b|\bin thousands,|\(in thousands\b/i.test(lines[i])) return 1000;
-    if (/\bin millions\b|\(in millions\b/i.test(lines[i])) return 1000000;
-  }
-  return 1;
-}
-
-function latestFactFromFacts(names, primaryFacts, secondaryFacts, filing) {
-  const all = { ...(secondaryFacts || {}), ...(primaryFacts || {}) };
-
-  for (const name of names) {
-    const fact = all[name];
-    if (!fact?.units) continue;
-
-    for (const unit of Object.values(fact.units)) {
-      if (!Array.isArray(unit)) continue;
-
-      const candidates = unit
-        .filter(x =>
-          (!filing.accession || String(x.accn || "") === String(filing.accession)) &&
-          Number.isFinite(Number(x.val))
-        )
-        .sort((a, b) => String(b.filed || "").localeCompare(String(a.filed || "")));
-
-      if (candidates.length) {
-        return {
-          value: Number(candidates[0].val),
-          tag: name
-        };
-      }
-    }
-  }
-
-  return null;
-}
