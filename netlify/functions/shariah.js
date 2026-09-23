@@ -578,75 +578,64 @@ function findProhibitedIncome(text, usgaap, filing) {
 }
 
 function findTotalIncome(text, usgaap, filing) {
-  const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  // Restrict the denominator to the actual current-period Statement of
+  // Operations. Searching the whole filing can accidentally pick numbers
+  // from MD&A, notes, or the prior-year column.
+  const raw = String(text || "");
+  const marker = /(?:condensed consolidated )?(?:statements of operations|statements of income|statements of earnings)/i;
+  const m = marker.exec(raw);
+  const sectionStart = m ? m.index : 0;
+  const tail = raw.slice(sectionStart);
+  const stop = tail.search(/see accompanying notes to condensed consolidated financial statements|statements of comprehensive (?:loss|income)|item 2\./i);
+  const section = stop > 0 ? tail.slice(0, stop) : tail.slice(0, 250000);
+  const lines = section.split(/\r?\n/).map(normalizeLine).filter(Boolean);
 
-  // AAOIFI 3/4/4 uses total income as the denominator. For companies with
-  // little/no operating revenue, this must not collapse to interest income
-  // alone. Build the denominator from the current-period positive income
-  // components actually disclosed in the income statement.
   const revenueRegex = /^(?:revenue|revenues|revenue,? net|total revenue|net sales|sales revenue|operating revenue)\b/i;
   const interestRegex = /^(?:interest income|interest revenue|income from interest)(?:\s|,|$)/i;
 
   let revenue = null;
   let interestIncome = null;
-  let totalOtherIncome = null;
-  const otherPositive = [];
+  let otherIncome = 0;
+  let foundIncomeRows = 0;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
+  for (const line of lines) {
     if (revenue == null && revenueRegex.test(line)) {
       const v = firstFinancialValueAfterLabel(line, revenueRegex);
-      if (v != null) revenue = Math.abs(v);
+      if (v != null) revenue = Math.max(0, v);
       continue;
     }
 
     if (interestIncome == null && interestRegex.test(line) &&
         !/interest expense|interest expenses/i.test(line)) {
       const v = firstFinancialValueAfterLabel(line, interestRegex);
-      if (v != null) interestIncome = Math.abs(v);
+      if (v != null) interestIncome = Math.max(0, v);
       continue;
     }
 
-    // Prefer an explicit gross "total other income" row when the filing has
-    // one. Do NOT use a net other-income/(expense) row as the denominator,
-    // because netting gains against unrelated losses can understate total
-    // income.
-    if (totalOtherIncome == null &&
-        /^total other income(?:\s*\(expense\))?(?:,?\s*net)?\b/i.test(line) &&
-        !/expense|loss/i.test(line)) {
-      const v = firstFinancialValueAfterLabel(
-        line,
-        /^total other income(?:\s*\(expense\))?(?:,?\s*net)?/i
-      );
-      if (v != null && v > 0) totalOtherIncome = v;
-      continue;
-    }
+    // Count only positive income/gain rows. Explicitly exclude the statement's
+    // net "other income (expense)" total because it can net large gains against
+    // unrelated losses and is not a gross total-income denominator.
+    const incomeRow =
+      /^(?:dividend income|gain on|gain from|gain in|change in fair value of .* liability|change in fair value of .* asset|income from|other income)\b/i;
 
-    // Positive non-operating income components commonly reported by SEC
-    // filers. Negative fair-value changes/losses are not income and are not
-    // allowed to reduce the denominator.
-    const incomeLabel =
-      /^(?:dividend income|gain on|gain from|gain in|change in fair value of .* liability|income from|other income)\b/i;
-
-    if (incomeLabel.test(line) &&
+    if (incomeRow.test(line) &&
         !/expense|expenses|loss|decrease|decreases/i.test(line)) {
-      const v = firstFinancialValueAfterLabel(line, incomeLabel);
-      if (v != null && v > 0) otherPositive.push(v);
+      const v = firstFinancialValueAfterLabel(line, incomeRow);
+      if (v != null && v > 0) {
+        otherIncome += v;
+        foundIncomeRows++;
+      }
     }
   }
 
-  const otherIncome = totalOtherIncome != null
-    ? totalOtherIncome
-    : otherPositive.reduce((a, x) => a + x, 0);
-
-  const components = [revenue, interestIncome, otherIncome].filter(v => v != null && v > 0);
+  const components = [revenue, interestIncome, otherIncome]
+    .filter(v => v != null && Number.isFinite(v) && v > 0);
   const total = components.reduce((sum, v) => sum + v, 0);
 
   if (total > 0) {
     return {
       value: total,
-      source: "SEC income statement — current-period positive income components"
+      source: "SEC Statement of Operations — gross positive income components"
     };
   }
 
