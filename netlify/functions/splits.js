@@ -49,9 +49,14 @@ exports.handler = async (event) => {
         x.symbol || x.ticker || x.Symbol || ""
       ).trim().toUpperCase();
 
-      const date = String(
-        x.exDate || x.executionDate || x.date || ""
-      ).slice(0, 10);
+      const rawDate = String(
+        x.executionDate || x.exDate || x.date || ""
+      ).trim();
+      let date = rawDate.slice(0, 10);
+      if (/^\\d{2}\\/\\d{2}\\/\\d{4}$/.test(rawDate)) {
+        const [mm, dd, yyyy] = rawDate.split("/");
+        date = yyyy + "-" + mm + "-" + dd;
+      }
 
       const ratio = String(
         x.ratio || x.splitRatio || x.Ratio || "-"
