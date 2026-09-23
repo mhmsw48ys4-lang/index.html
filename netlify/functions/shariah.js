@@ -555,28 +555,44 @@ function findInterestTakingDeposits(text, usgaap, filing) {
 
 function getPrimaryOperationsStatementSection(text) {
   const raw = String(text || "");
-  const marker = /(?:condensed (?:consolidated )?)?statements of operations(?: and comprehensive (?:loss|income))?/gi;
-  const candidates = [];
-  let m;
 
-  while ((m = marker.exec(raw))) {
-    const tail = raw.slice(m.index, m.index + 120000);
-    const stop = tail.search(/(?:condensed )?(?:statements of cash flows|statements of comprehensive (?:loss|income)|notes to (?:condensed )?financial statements)/i);
-    const section = stop > 0 ? tail.slice(0, stop) : tail;
+  // The caller normally supplies cleaned text. If HTML is still present,
+  // preserve table-row boundaries; SEC financial statements are row-oriented.
+  const marker = /(?:condensed (?:consolidated )?)?statements of operations(?: and comprehensive (?:loss|income))?/i;
+  const start = raw.search(marker);
+  if (start < 0) return null;
 
-    // Ignore table-of-contents / navigation hits. The real statement contains
-    // financial row labels and multiple numbers.
-    const hasRows =
-      /\b(?:sales|revenue|interest income|dividend income|operating expenses|net loss)\b/i.test(section);
-    const numberCount = (section.match(/\$?\(?[0-9][0-9,]*(?:\.\d+)?\)?/g) || []).length;
+  const tail = raw.slice(start);
+  const stop = tail.search(/(?:condensed )?(?:statements of cash flows|statements of comprehensive (?:loss|income)|notes to (?:condensed )?financial statements)/i);
+  return stop > 0 ? tail.slice(0, stop) : tail.slice(0, 120000);
+}
 
-    if (hasRows && numberCount >= 8) {
-      candidates.push(section);
+function extractStatementRowValues(text, labelRegex) {
+  const section = getPrimaryOperationsStatementSection(text);
+  if (!section) return [];
+
+  const lines = section.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  const out = [];
+
+  for (const line of lines) {
+    if (!labelRegex.test(line)) continue;
+
+    const after = line.replace(labelRegex, " ");
+    const matches = after.match(/(?:\$?\(?[0-9][0-9,]*(?:\.\d+)?\)?|—|–)/g) || [];
+
+    for (const token of matches) {
+      if (token === "—" || token === "–") {
+        out.push(0);
+        break;
+      }
+      const n = parseNumber(token);
+      if (Number.isFinite(n)) {
+        out.push(Math.abs(n));
+        break;
+      }
     }
   }
-
-  // The first qualifying statement is the primary financial statement.
-  return candidates.length ? candidates[0] : null;
+  return out;
 }
 
 function getOperationsSection(text) {
@@ -669,29 +685,23 @@ function findProhibitedIncome(text, usgaap, filing) {
   return null;
 }
 function extractCurrentQuarterGrossPositiveIncome(text) {
-  // Use the first financial Statement of Operations, not the last MD&A
-  // reconciliation. The first statement has the current-quarter column first.
-  const ops = getPrimaryOperationsStatementSection(text) || getOperationsSection(text);
-  if (!ops) return null;
-
-  // Read the first/current-quarter value from each income row in the
-  // Statement of Operations. This is intentionally limited to the statement
-  // section so prior-period MD&A tables cannot become the denominator.
-  const labels = [
-    /^(?:sales|revenue(?:s)?|net sales)\b/im,
-    /^interest income(?:,?\s+net)?\b/im,
-    /^dividend income\b/im,
-    /^change in fair value of conversion option liability\b/im,
-    /^change in fair value of warrants? liabilities?\b/im,
-    /^change in fair value of .* liability\b/im,
-    /^gain on\b/im,
-    /^gain from\b/im
+  const rowLabels = [
+    /^(?:sales|revenue(?:s)?|net sales)\\b/i,
+    /^interest income(?:,?\\s+net)?\\b/i,
+    /^dividend income\\b/i,
+    /^change in fair value of conversion option liability\\b/i,
+    /^change in fair value of warrants? liabilities?\\b/i,
+    /^change in fair value of .* liability\\b/i,
+    /^gain on\\b/i,
+    /^gain from\\b/i
   ];
 
   const values = [];
-  for (const label of labels) {
-    const v = findLabeledFinancialValue(ops, label);
-    if (v != null && v > 0 && !values.includes(v)) values.push(v);
+  for (const label of rowLabels) {
+    const found = extractStatementRowValues(text, label);
+    for (const v of found) {
+      if (v > 0 && !values.includes(v)) values.push(v);
+    }
   }
 
   const total = values.reduce((sum, v) => sum + v, 0);
