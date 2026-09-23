@@ -269,15 +269,15 @@ function getDeposits(facts, rows) {
 }
 
 function getInterest(facts, rows) {
-  // Prefer an SEC filing row so units such as "dollars in thousands"
-  // stay aligned with the revenue row. A composite line is still usable
-  // only as a conservative disclosed-interest amount.
+  // Only accept a standalone interest-income disclosure.
+  // Do NOT treat "interest income and unrealized gains" or
+  // "financing income, net" as pure interest income.
   for (const r of rows) {
-    if (/^interest\s+income\b/i.test(r.label) && r.values.length) {
+    if (/^interest\s+income(?:,\s*net)?$/i.test(r.label) && r.values.length) {
       return {
         value: Math.abs(r.values[0]),
         label: r.label,
-        source: "SEC filing — disclosed interest income line"
+        source: "SEC filing — standalone interest income"
       };
     }
   }
