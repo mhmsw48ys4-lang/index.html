@@ -118,7 +118,7 @@ exports.handler = async function (event) {
 
     // Prefer the actual filing table. This prevents a generic "financing income, net"
     // XBRL tag from being mistaken for pure interest income.
-    const interest = findInterestInRows(filingRows) || findExplicitInterestFact(facts);
+    const interest = findInterestInRows(filingRows);
 
     const sales = findFact(facts, [
       "RevenueFromContractWithCustomerExcludingAssessedTax",
@@ -346,16 +346,6 @@ function findFact(facts, names, options) {
   };
 }
 
-function findExplicitInterestFact(facts) {
-  // Only accept XBRL tags that explicitly represent interest income.
-  // Do not use generic financing/interest-expense-net tags as a proxy.
-  return findFact(facts, [
-    "InterestIncomeNonoperating",
-    "InterestIncome",
-    "InvestmentIncomeInterest"
-  ], { flow: true, quarter: true });
-}
-
 function findDebtFactByKeywords(facts) {
   const namespaces = facts?.facts || {};
   const candidates = [];
@@ -440,6 +430,10 @@ function extractSharesFromFacts(facts) {
 
 function extractRows(html) {
   const rows = [];
+  const documentText = String(html || "");
+  const scale = /(?:U\.S\.\s*dollars?\s+in\s+thousands|\(\s*in\s+thousands\b|\bin\s+thousands\b)/i.test(documentText)
+    ? 1000
+    : 1;
   const re = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
   let m;
   while ((m = re.exec(String(html || "")))) {
@@ -453,7 +447,10 @@ function extractRows(html) {
     }
     if (cells.length >= 2) rows.push({
       label: cells[0],
-      values: cells.slice(1).map(parseMoney).filter(v => v !== null)
+      values: cells.slice(1)
+      .map(parseMoney)
+      .filter(v => v !== null)
+      .map(v => v * scale)
     });
   }
   return rows;
