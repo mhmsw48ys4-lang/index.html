@@ -78,10 +78,10 @@ exports.handler = async (event) => {
       }
     }
 
-    const debt = getDebt(facts, rows);
-    const deposits = getDeposits(facts, rows);
+    const debt = getDebt(facts, rows, filing);
+    const deposits = getDeposits(facts, rows, filing);
     const interest = getInterest(facts, rows);
-    const sales = getSales(facts, rows);
+    const sales = getSales(facts, rows, filing);
 
     const checks = {
       debt: makeCheck(debt, marketCap, 30),
@@ -206,7 +206,45 @@ function makeCheck(item, denominator, limit) {
   };
 }
 
-function getDebt(facts, rows) {
+function getDebt(facts, rows, filing) {
+  // Use the selected filing first. This prevents a debt fact from an older
+  // quarter or a different XBRL context being attached to this ticker.
+  const explicit = rows.filter(r =>
+    /(convertible\\s+(notes?|debt)|notes?\\s+payable|term\\s+loans?|loans?\\s+payable|long[- ]term\\s+(debt|borrowings?)|short[- ]term\\s+(borrowings?|debt)|senior\\s+notes?|interest[- ]bearing\\s+debt)/i.test(r.label) &&
+    r.values.length
+  );
+
+  if (explicit.length) {
+    const total = explicit.find(r =>
+      /^total\\s+(debt|borrowings?|notes?\\s+payable)$/i.test(r.label)
+    );
+
+    if (total) {
+      return {
+        value: Math.abs(total.values[0]),
+        label: total.label,
+        source: "SEC filing — total debt"
+      };
+    }
+
+    const unique = [];
+    const seen = {};
+    explicit.forEach(r => {
+      const key = r.label.toLowerCase();
+      if (!seen[key]) {
+        seen[key] = true;
+        unique.push(r);
+      }
+    });
+
+    return {
+      value: unique.reduce((s, r) => s + Math.abs(r.values[0]), 0),
+      label: unique.map(r => r.label).slice(0, 6).join(" | "),
+      source: "SEC filing — explicit debt lines"
+    };
+  }
+
+  // Fallback only to XBRL facts from this exact accession/report date.
   const names = [
     "ConvertibleNotesPayable",
     "ConvertibleDebt",
@@ -216,45 +254,16 @@ function getDebt(facts, rows) {
     "ShortTermBorrowings",
     "NotesPayable",
     "DebtCurrent",
-    "DebtNoncurrent",
-    "Debt"
+    "DebtNoncurrent"
   ];
 
-  const x = instantFacts(facts, names);
-  if (x) return x;
-
-  const re = /(convertible\s+(notes?|debt)|notes?\s+payable|term\s+loans?|loans?\s+payable|long[- ]term\s+(debt|borrowings?)|short[- ]term\s+(borrowings?|debt)|senior\s+notes?|interest[- ]bearing\s+debt)/i;
-  const found = rows.filter(r => re.test(r.label) && r.values.length);
-
-  if (!found.length) return null;
-
-  const unique = [];
-  const seen = {};
-  found.forEach(r => {
-    const key = r.label + "|" + r.values[0];
-    if (!seen[key]) {
-      seen[key] = true;
-      unique.push(r);
-    }
-  });
-
-  return {
-    value: unique.reduce((s, r) => s + Math.abs(r.values[0]), 0),
-    label: unique.map(r => r.label).slice(0, 5).join(" | "),
-    source: "SEC filing — explicit debt lines"
-  };
+  return instantFacts(facts, names, filing);
 }
 
-function getDeposits(facts, rows) {
-  const names = [
-    "InterestBearingDeposits",
-    "InterestBearingDepositsAtBanks"
-  ];
-
-  const x = instantFacts(facts, names);
-  if (x) return x;
-
-  const re = /interest[- ]bearing\s+(deposits?|securities|investments?)/i;
+function getDeposits(facts, rows, filing) {
+  // Do not turn missing disclosure into zero.
+  // Also do not reuse an older InterestBearingDeposits fact.
+  const re = /interest[- ]bearing\\s+(deposits?|securities|investments?)/i;
   for (const r of rows) {
     if (re.test(r.label) && r.values.length) {
       return {
@@ -265,7 +274,12 @@ function getDeposits(facts, rows) {
     }
   }
 
-  return null;
+  const names = [
+    "InterestBearingDeposits",
+    "InterestBearingDepositsAtBanks"
+  ];
+
+  return instantFacts(facts, names, filing);
 }
 
 function getInterest(facts, rows) {
@@ -286,7 +300,7 @@ function getInterest(facts, rows) {
   return null;
 }
 
-function getSales(facts, rows) {
+function getSales(facts, rows, filing) {
   // Prefer the selected filing's explicit revenue row. This prevents
   // generic XBRL tags such as "Revenue" from selecting an unrelated
   // context/value (for example a balance-sheet amount).
@@ -309,7 +323,7 @@ function getSales(facts, rows) {
   ]) || null;
 }
 
-function instantFacts(facts, names) {
+function instantFacts(facts, names, filing) {
   const all = [];
   const namespaces = facts && facts.facts || {};
 
@@ -322,7 +336,7 @@ function instantFacts(facts, names) {
       const tag = tags[tagName];
       for (const unit of Object.keys(tag.units || {})) {
         for (const item of tag.units[unit] || []) {
-          if (item.start || item.val == null) continue;
+          if (item.start || item.val == null) continue;\n          if (filing && !matchesFiling(item, filing)) continue;
 
           const value = Number(item.val);
           if (!Number.isFinite(value) || value <= 0) continue;
@@ -352,7 +366,7 @@ function instantFacts(facts, names) {
   };
 }
 
-function flowFacts(facts, names) {
+function flowFacts(facts, names, filing) {
   const all = [];
   const namespaces = facts && facts.facts || {};
 
@@ -394,6 +408,22 @@ function flowFacts(facts, names) {
     label: all[0].label,
     source: "SEC XBRL — " + all[0].label
   };
+}
+
+function matchesFiling(item, filing) {
+  if (!filing) return true;
+
+  const wantedAccn = String(filing.accession || "").toLowerCase();
+  const itemAccn = String(item.accn || "").toLowerCase();
+  const wantedDate = String(filing.reportDate || "");
+
+  // When SEC gives accession provenance, require the exact filing.
+  if (wantedAccn && itemAccn && itemAccn !== wantedAccn) return false;
+
+  // For balance-sheet facts, require the selected filing's report date.
+  if (wantedDate && item.end && String(item.end) !== wantedDate) return false;
+
+  return true;
 }
 
 function isQuarter(item) {
