@@ -730,9 +730,27 @@ function extractFlattenedIncomeComponents(text) {
 }
 
 function extractCurrentQuarterGrossPositiveIncome(text) {
-  // normalizeLine() removes the "|" table separators, so these patterns
-  // deliberately match the normalized row text.
-  const rowLabels = [
+  const raw = String(text || "");
+
+  // Work from the actual operations statement when possible. If the SEC
+  // markup is flattened differently, fall back to a bounded text window
+  // around the first real statement.
+  let source = getPrimaryOperationsStatementSection(raw);
+
+  if (!source) {
+    const m = raw.match(/Statements of Operations(?: and Comprehensive (?:Loss|Income))?/i);
+    if (m) {
+      const tail = raw.slice(m.index);
+      const stop = tail.search(/Net loss attributable to common stockholders|Net income attributable to common stockholders/i);
+      source = stop > 0 ? tail.slice(0, stop) : tail.slice(0, 60000);
+    }
+  }
+
+  if (!source) return null;
+
+  const lines = source.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  const values = [];
+  const labels = [
     /^Sales(?!\s+and\s+marketing)\b/i,
     /^(?:Revenue(?:s)?|Net Sales)\b/i,
     /^Interest Income(?:,?\s+Net)?\b/i,
@@ -743,32 +761,24 @@ function extractCurrentQuarterGrossPositiveIncome(text) {
     /^Gain (?:on|from)\b/i
   ];
 
-  const section = getPrimaryOperationsStatementSection(text);
-  if (!section) return null;
-
-  const values = [];
-  const lines = section.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-
   for (const line of lines) {
-    for (const label of rowLabels) {
+    for (const label of labels) {
       if (!label.test(line)) continue;
 
-      // The first financial number after the exact row label is the
-      // current-quarter column because SEC table cells are preserved
-      // before normalization and remain in column order.
       const after = line.replace(label, " ");
       const nums = after.match(/\(?[0-9][0-9,]*(?:\.\d+)?\)?/g) || [];
+      if (!nums.length) break;
 
-      if (nums.length) {
-        const n = Math.abs(parseNumber(nums[0]));
-        if (Number.isFinite(n) && n > 0 && !values.includes(n)) {
-          values.push(n);
-        }
+      const value = Math.abs(parseNumber(nums[0]));
+      if (Number.isFinite(value) && value > 0 && !values.includes(value)) {
+        values.push(value);
       }
       break;
     }
   }
 
+  // FEMY and similar SEC tables should contain sales + positive other-income
+  // rows. Do not fall back to interest income alone when these rows exist.
   const total = values.reduce((sum, v) => sum + v, 0);
   return total > 0 ? total : null;
 }
