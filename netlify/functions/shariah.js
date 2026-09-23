@@ -701,13 +701,13 @@ function findProhibitedIncome(text, usgaap, filing) {
 function extractFlattenedIncomeComponents(text) {
   const raw = String(text || "");
   const labels = [
-    { key: "sales", re: /(?:^|\\s)(?:sales|revenue|revenues|net sales)\\b/i },
-    { key: "interest", re: /(?:^|\\s)interest income(?:,?\\s+net)?\\b/i },
-    { key: "dividend", re: /(?:^|\\s)dividend income\\b/i },
-    { key: "conversion", re: /(?:^|\\s)change in fair value of conversion option liability\\b/i },
-    { key: "warrants", re: /(?:^|\\s)change in fair value of warrants? liabilities?\\b/i },
-    { key: "fairValue", re: /(?:^|\\s)change in fair value of [^\\n]{0,100} liability\\b/i },
-    { key: "gain", re: /(?:^|\\s)gain (?:on|from)\\b/i }
+    { key: "sales", re: /(?:^|\s)(?:sales|revenue|revenues|net sales)\b/i },
+    { key: "interest", re: /(?:^|\s)interest income(?:,?\s+net)?\b/i },
+    { key: "dividend", re: /(?:^|\s)dividend income\b/i },
+    { key: "conversion", re: /(?:^|\s)change in fair value of conversion option liability\b/i },
+    { key: "warrants", re: /(?:^|\s)change in fair value of warrants? liabilities?\b/i },
+    { key: "fairValue", re: /(?:^|\s)change in fair value of [^\n]{0,100} liability\b/i },
+    { key: "gain", re: /(?:^|\s)gain (?:on|from)\b/i }
   ];
 
   const result = {};
@@ -716,7 +716,7 @@ function extractFlattenedIncomeComponents(text) {
     if (!m) continue;
 
     const tail = raw.slice(m.index + m[0].length, m.index + m[0].length + 700);
-    const nums = tail.match(/(?:\\$\\s*)?\\(?[0-9][0-9,]*(?:\\.\\d+)?\\)?/g) || [];
+    const nums = tail.match(/(?:\$\s*)?\(?[0-9][0-9,]*(?:\.\d+)?\)?/g) || [];
 
     for (const token of nums) {
       const n = parseNumber(token);
