@@ -116,10 +116,9 @@ exports.handler = async function (event) {
       source: "SEC XBRL + latest SEC filing — no interest-bearing deposits line found"
     };
 
-    const interest = findFact(facts, [
-      "InterestIncomeExpenseNonoperatingNet","InterestIncomeNonoperating",
-      "InterestIncome","InterestAndOtherIncome","InvestmentIncomeInterest"
-    ], { flow: true, quarter: true }) || findInterestInRows(filingRows);
+    // Prefer the actual filing table. This prevents a generic "financing income, net"
+    // XBRL tag from being mistaken for pure interest income.
+    const interest = findInterestInRows(filingRows) || findExplicitInterestFact(facts);
 
     const sales = findFact(facts, [
       "RevenueFromContractWithCustomerExcludingAssessedTax",
@@ -347,6 +346,16 @@ function findFact(facts, names, options) {
   };
 }
 
+function findExplicitInterestFact(facts) {
+  // Only accept XBRL tags that explicitly represent interest income.
+  // Do not use generic financing/interest-expense-net tags as a proxy.
+  return findFact(facts, [
+    "InterestIncomeNonoperating",
+    "InterestIncome",
+    "InvestmentIncomeInterest"
+  ], { flow: true, quarter: true });
+}
+
 function findDebtFactByKeywords(facts) {
   const namespaces = facts?.facts || {};
   const candidates = [];
@@ -543,6 +552,47 @@ function findSalesInRows(rows) {
       return {value: Math.abs(row.values[0]), label: row.label, source: "SEC filing Statement of Operations"};
   }
   return null;
+}
+
+function parseMoney(text) {
+  const s = String(text || "").trim();
+  if (!s) return null;
+
+  // Keep the first accounting-style amount in the cell.
+  const cleaned = s
+    .replace(/\u00a0/g, " ")
+    .replace(/,/g, "")
+    .replace(/\$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const paren = /^\(\s*([-+]?\d+(?:\.\d+)?)\s*\)$/.exec(cleaned);
+  if (paren) return -Math.abs(Number(paren[1]));
+
+  const m = cleaned.match(/[-+]?\d+(?:\.\d+)?/);
+  if (!m) return null;
+
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function decodeHtml(text) {
+  return String(text || "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = Number(n);
+      return Number.isFinite(code) ? String.fromCharCode(code) : _;
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => {
+      const code = parseInt(h, 16);
+      return Number.isFinite(code) ? String.fromCharCode(code) : _;
+    });
 }
 
 async function getText(url) {
