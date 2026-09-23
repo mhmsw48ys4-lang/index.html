@@ -138,14 +138,10 @@ exports.handler = async function (event) {
     // AAOIFI SS21: prohibited-component income must be compared with
     // TOTAL income, and if the source is not properly disclosed we must
     // exercise due care rather than assume the missing amount is zero.
-    const totalIncome =
-      findFact(facts, [
-        "Revenue","Revenues","SalesRevenueNet",
-        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
-        "IncomeLossFromContinuingOperations"
-      ], { flow: true, quarter: true }) ||
-      findTotalIncomeInRows(filingRows) ||
-      sales;
+    // For the 5% mixed/prohibited-income screen, never use net income,
+    // operating loss, or pre-tax loss as the denominator. The denominator is
+    // the company's reported operating revenue/sales for the same period.
+    const totalIncome = sales;
 
     const prohibitedComponents = findProhibitedIncomeComponents(
       facts,
@@ -207,6 +203,7 @@ exports.handler = async function (event) {
           : (prohibitedRatio == null ? null : prohibitedRatio <= 5),
         source: interestCheck?.source || null,
         incomeSource: interestCheck?.label || null,
+        denominatorSource: totalIncome?.label || null,
         dataComplete: prohibitedIncomeComplete
       }
     };
