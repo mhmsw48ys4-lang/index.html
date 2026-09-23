@@ -415,7 +415,19 @@ placeholder="اكتب رمز السهم مثل NTCL">
 </div>
 
 <div class="scannerDesc">
-أدخل عدة رموز أسهم، وسيتم البحث عن الأسهم التي لديها تقسيم حديث من اليوم 1 إلى اليوم 100 بعد التقسيم، مع وجود قاع بعد التقسيم.
+المسح التلقائي يبحث عن تقسيمات الأسهم الأمريكية خلال آخر 100 يوم، ثم يجلب بيانات كل سهم ويفلتر النتائج حسب شروط الارتكاز الموجودة في الموقع.
+</div>
+
+<button
+class="scanButton"
+onclick="autoScanSplits()">
+🔎 مسح التقسيمات تلقائياً
+</button>
+
+<div style="height:8px"></div>
+
+<div class="scannerDesc">
+أو افحص رموزاً محددة يدوياً:
 </div>
 
 <textarea
@@ -433,7 +445,7 @@ AMIX
 <button
 class="scanButton"
 onclick="scanSplits()">
-بدء فرز التقسيمات
+بدء الفرز اليدوي
 </button>
 
 <div id="scanStatus" class="scanStatus"></div>
@@ -1789,6 +1801,189 @@ text
 
 }
 
+
+
+/* =========================
+   المسح التلقائي للتقسيمات
+========================= */
+
+function isoDateDaysAgo(days){
+  const d=new Date();
+  d.setDate(d.getDate()-days);
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,"0");
+  const day=String(d.getDate()).padStart(2,"0");
+  return y+"-"+m+"-"+day;
+}
+
+async function fetchSplitCalendar(){
+  const from=isoDateDaysAgo(100);
+  const to=new Date().toISOString().slice(0,10);
+
+  const url=
+    "https://api.nasdaq.com/api/calendar/splits"+
+    "?fromdate="+encodeURIComponent(from)+
+    "&todate="+encodeURIComponent(to)+
+    "&limit=5000";
+
+  const response=await fetch(url,{
+    cache:"no-store",
+    headers:{
+      "Accept":"application/json, text/plain, */*"
+    }
+  });
+
+  if(!response.ok)
+    throw new Error("تعذر جلب قائمة التقسيمات من Nasdaq");
+
+  const json=await response.json();
+  const rows=json?.data?.rows||[];
+
+  return rows.map(x=>{
+    const symbol=String(
+      x.symbol||x.ticker||x.Symbol||""
+    ).trim().toUpperCase();
+
+    const date=String(
+      x.exDate||x.executionDate||x.date||""
+    ).slice(0,10);
+
+    const ratio=String(
+      x.ratio||x.splitRatio||x.Ratio||"-"
+    );
+
+    return {symbol,date,ratio};
+  }).filter(x=>x.symbol&&/^[-A-Z0-9.]+$/.test(x.symbol)&&x.date);
+}
+
+async function autoScanSplits(){
+  const status=document.getElementById("scanStatus");
+  const results=document.getElementById("scanResults");
+
+  results.innerHTML="";
+  status.textContent="جاري جلب قائمة التقسيمات لآخر 100 يوم...";
+
+  try{
+    const events=await fetchSplitCalendar();
+
+    const latestBySymbol={};
+
+    for(const e of events){
+      const old=latestBySymbol[e.symbol];
+      if(!old || e.date>old.date)
+        latestBySymbol[e.symbol]=e;
+    }
+
+    const candidates=Object.values(latestBySymbol)
+      .filter(x=>x.date>=isoDateDaysAgo(100))
+      .sort((a,b)=>b.date.localeCompare(a.date));
+
+    if(!candidates.length){
+      status.textContent="انتهى المسح — لم تصل قائمة تقسيمات.";
+      results.innerHTML='<div class="empty">لا توجد تقسيمات خلال آخر 100 يوم حسب المصدر.</div>';
+      return;
+    }
+
+    const found=[];
+    const errors=[];
+    let done=0;
+    const concurrency=4;
+    let cursor=0;
+
+    async function worker(){
+      while(true){
+        const i=cursor++;
+        if(i>=candidates.length) return;
+
+        const split=candidates[i];
+
+        status.textContent=
+          "جاري فحص التقسيمات: "+(done+1)+" من "+
+          candidates.length+" — "+split.symbol;
+
+        try{
+          const result=await getStock(split.symbol);
+
+          /*
+          نستخدم تاريخ التقسيم القادم من تقويم Nasdaq
+          حتى لا نعتمد على قيمة split داخل خدمة الأسعار فقط.
+          */
+          result.split={
+            date:split.date,
+            ratio:split.ratio
+          };
+
+          const analysis=analyze(result);
+
+          if(
+            analysis.split &&
+            analysis.daysAfter>=1 &&
+            analysis.daysAfter<=100 &&
+            analysis.lowestAfter
+          ){
+            found.push(analysis);
+          }
+        }catch(error){
+          errors.push(split.symbol+": "+error.message);
+        }
+
+        done++;
+        status.textContent=
+          "جاري فحص التقسيمات: "+done+" من "+
+          candidates.length+" — "+split.symbol;
+      }
+    }
+
+    await Promise.all(
+      Array.from(
+        {length:Math.min(concurrency,candidates.length)},
+        ()=>worker()
+      )
+    );
+
+    found.sort((a,b)=>a.daysAfter-b.daysAfter);
+
+    if(!found.length){
+      status.textContent=
+        "انتهى المسح — لا توجد نتائج مطابقة لشروط التقسيم والقاع.";
+
+      results.innerHTML=
+        '<div class="empty">'+
+        'تم فحص '+candidates.length+
+        ' تقسيم، ولم يظهر سهم مطابق لشرط وجود قاع بعد التقسيم.'+
+        '</div>';
+
+      if(errors.length){
+        results.innerHTML+=
+          '<div class="error">تعذر فحص بعض الرموز:<br>'+
+          escapeHtml(errors.join("\n"))+
+          '</div>';
+      }
+      return;
+    }
+
+    status.innerHTML=
+      "تم المسح تلقائياً ✓ — فُحص "+candidates.length+
+      " تقسيم ووجدنا "+found.length+" نتيجة.";
+
+    results.innerHTML=
+      found.map(renderScanCard).join("");
+
+    if(errors.length){
+      results.innerHTML+=
+        '<div class="error">تعذر فحص بعض الرموز:<br>'+
+        escapeHtml(errors.join("\n"))+
+        '</div>';
+    }
+
+  }catch(error){
+    status.innerHTML=
+      '<div class="error">'+
+      'تعذر تشغيل المسح التلقائي: '+
+      escapeHtml(error.message)+
+      '<br>إذا منع المتصفح اتصال Nasdaq، نحتاج إضافة Proxy داخل Netlify.</div>';
+  }
+}
 
 /* =========================
    بطاقة نتيجة الفرز
