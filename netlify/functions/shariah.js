@@ -647,50 +647,47 @@ function extractStatementAmount(text, labelPattern) {
 
 function extractSecCurrentQuarterIncomeComponents(text) {
   const raw = String(text || "");
-
-  // Build the actual Statement of Operations section from the cleaned SEC
-  // filing. SEC filings repeat the statement title in the table of contents
-  // and in notes, so choose the occurrence that contains BOTH Sales and
-  // Interest income in the same bounded section.
   const lines = raw.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const titleRe = /statements of operations(?: and comprehensive (?:loss|income))?/i;
-  let section = null;
 
+  // SEC tables put the current quarter first in each row. Do not depend on
+  // the Statement title: SEC HTML formatting varies and the title may be
+  // split across several lines. Instead, locate the contiguous income
+  // statement block by its actual rows (Sales + Interest income).
+  const salesRe = /^Sales\\b/i;
+  const interestRe = /^Interest income(?:,\\s*net)?\\b/i;
+
+  let best = null;
   for (let i = 0; i < lines.length; i++) {
-    if (!titleRe.test(lines[i])) continue;
+    if (!salesRe.test(lines[i])) continue;
 
-    const window = lines.slice(i, Math.min(lines.length, i + 180));
-    const hasSales = window.some(x => /^Sales\b/i.test(x) && !/^Sales (?:and|&)/i.test(x));
-    const hasInterest = window.some(x => /^Interest income(?:,\s*net)?\b/i.test(x));
-    if (!hasSales || !hasInterest) continue;
+    for (let j = i + 1; j < Math.min(lines.length, i + 140); j++) {
+      if (!interestRe.test(lines[j])) continue;
 
-    const endIndex = window.findIndex((x, n) =>
-      n > 5 && /^(?:FEMASYS INC\.\s+)?(?:Condensed )?(?:Statements of Stockholders|Statements of Cash Flows|Notes to Financial Statements)\b/i.test(x)
-    );
+      const block = lines.slice(i, Math.min(lines.length, j + 30));
+      const hasOtherIncome = block.some(x => /^Other income \\(expense\\):?/i.test(x));
+      const hasOperating = block.some(x => /^Total operating expenses\\b/i.test(x));
+      const score = (hasOtherIncome ? 3 : 0) + (hasOperating ? 2 : 0) + (j - i <= 80 ? 2 : 0);
 
-    section = window.slice(0, endIndex > 0 ? endIndex : window.length);
-    break;
+      if (!best || score > best.score) {
+        best = { lines: block, score };
+      }
+      break;
+    }
   }
 
-  // If the title is formatted differently, use the already-tested SEC
-  // section helper as a fallback.
-  if (!section) {
-    const fallback = getPrimaryOperationsStatementSection(raw);
-    if (fallback) section = fallback.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  }
+  if (!best) return null;
+  const section = best.lines;
 
-  if (!section) return null;
-
-  const firstNumberAfter = (line, labelRe) => {
+  const firstNumberAfterLabel = (line, labelRe) => {
     const m = String(line || "").match(labelRe);
     if (!m) return null;
-
     const tail = String(line).slice(m.index + m[0].length);
-    const tokens = tail.match(/(?:—|–|\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?)/g) || [];
 
+    // Current quarter is the first numeric cell after the row label.
+    const tokens = tail.match(/(?:—|–|-|\\$?\\s*\\(?[0-9][0-9,]*(?:\\.[0-9]+)?\\)?)/g) || [];
     for (const token of tokens) {
       const t = String(token).trim();
-      if (t === "—" || t === "–") return 0;
+      if (t === "—" || t === "–" || t === "-") return 0;
       const n = parseNumber(t);
       if (Number.isFinite(n)) return Math.abs(n);
     }
@@ -701,17 +698,17 @@ function extractSecCurrentQuarterIncomeComponents(text) {
     for (const line of section) {
       if (excludeRe && excludeRe.test(line)) continue;
       if (!labelRe.test(line)) continue;
-      const value = firstNumberAfter(line, labelRe);
+      const value = firstNumberAfterLabel(line, labelRe);
       if (value != null) return value;
     }
     return null;
   };
 
-  const sales = findRow(/^Sales\b/i, /^Sales (?:and|&)\s*(?:marketing|sales)/i);
-  const interest = findRow(/^Interest income(?:,\s*net)?\b/i);
-  const dividend = findRow(/^Dividend income\b/i);
-  const conversion = findRow(/^Change in fair value of conversion option liability\b/i);
-  const warrants = findRow(/^Change in fair value of warrants liabilities?\b/i);
+  const sales = findRow(/^Sales\\b/i, /^Sales (?:and|&)\\s*(?:marketing|sales)/i);
+  const interest = findRow(/^Interest income(?:,\\s*net)?\\b/i);
+  const dividend = findRow(/^Dividend income\\b/i);
+  const conversion = findRow(/^Change in fair value of conversion option liability\\b/i);
+  const warrants = findRow(/^Change in fair value of warrants liabilities?\\b/i);
 
   const components = [];
   const add = (key, value) => {
