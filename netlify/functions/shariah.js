@@ -731,14 +731,14 @@ function extractFlattenedIncomeComponents(text) {
 
 function extractCurrentQuarterGrossPositiveIncome(text) {
   const rowLabels = [
-    /^Sales\\s*\\|/i,
-    /^(?:Revenue(?:s)?|Net Sales)\\s*\\|/i,
-    /^Interest Income(?:,?\\s+Net)?\\s*\\|/i,
-    /^Dividend Income\\s*\\|/i,
-    /^Change in Fair Value of Conversion Option Liability\\s*\\|/i,
-    /^Change in Fair Value of Warrants? Liabilities?\\s*\\|/i,
-    /^Change in Fair Value of .* Liability\\s*\\|/i,
-    /^Gain (?:on|from)\\b/i
+    /^Sales\s+(?:\$|[0-9(])/i,
+    /^(?:Revenue(?:s)?|Net Sales)\s+(?:\$|[0-9(])/i,
+    /^Interest Income(?:,?\s+Net)?\s+(?:\$|[0-9(])/i,
+    /^Dividend Income\s+(?:\$|[0-9(])/i,
+    /^Change in Fair Value of Conversion Option Liability\s+(?:\$|[0-9(])/i,
+    /^Change in Fair Value of Warrants? Liabilities?\s+(?:\$|[0-9(])/i,
+    /^Change in Fair Value of .* Liability\s+(?:\$|[0-9(])/i,
+    /^Gain (?:on|from)\b/i
   ];
 
   const section = getPrimaryOperationsStatementSection(text);
@@ -751,8 +751,9 @@ function extractCurrentQuarterGrossPositiveIncome(text) {
     for (const label of rowLabels) {
       if (!label.test(line)) continue;
 
-      // Table cells are preserved by cleanText; the first numeric token after
-      // the row label is the current-quarter value.
+      // cleanText preserves SEC table cells; normalizeLine turns separators
+      // into spaces. The first numeric token after the row label is the
+      // current-quarter value.
       const after = line.replace(label, " ");
       const nums = after.match(/\(?[0-9][0-9,]*(?:\.\d+)?\)?/g) || [];
 
@@ -767,7 +768,6 @@ function extractCurrentQuarterGrossPositiveIncome(text) {
   const total = values.reduce((sum, v) => sum + v, 0);
   return total > 0 ? total : null;
 }
-
 function extractCurrentQuarterPositiveIncome(text) {
   const raw = String(text || "");
   const startMatch = raw.match(/Condensed (?:Consolidated )?Statements of Operations(?: and Comprehensive (?:Loss|Income))?/i);
