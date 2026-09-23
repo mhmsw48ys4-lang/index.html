@@ -1,5 +1,4 @@
-// Top-level response helper. Keep this outside the handler so every execution path can use it.
-function send(statusCode, body, headers) {
+function makeResponse(statusCode, body, headers) {
   return {
     statusCode,
     headers,
@@ -18,7 +17,7 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers, body: "" };
 
   const symbol = String(event.queryStringParameters?.symbol || "").trim().toUpperCase();
-  if (!symbol) return send(400, { error: "اكتب رمز السهم" }, headers);
+  if (!symbol) return makeResponse(400, { error: "اكتب رمز السهم" }, headers);
 
   try {
     const secHeaders = {
@@ -36,7 +35,7 @@ exports.handler = async (event) => {
       }
     }
 
-    if (!company) return send(404, { error: "لم نجد الشركة في سجلات SEC" }, headers);
+    if (!company) return makeResponse(404, { error: "لم نجد الشركة في سجلات SEC" }, headers);
 
     const cik = String(company.cik_str).padStart(10, "0");
     const submissions = await fetchJson(
@@ -48,7 +47,7 @@ exports.handler = async (event) => {
     const filing = await chooseLatestFinancialFiling(recent, cik, secHeaders);
 
     if (!filing) {
-      return send(200, {
+      return makeResponse(200, {
         symbol,
         status: "insufficient",
         reason: "لم نجد آخر إفصاح مالي مناسب في SEC",
@@ -128,7 +127,7 @@ exports.handler = async (event) => {
     const wordBlocked = prohibitedWords.some(w => activityText.includes(w));
 
     if (wordBlocked) {
-      return send(200, {
+      return makeResponse(200, {
         symbol,
         status: "rejected_activity",
         activity: companyName,
@@ -213,7 +212,7 @@ exports.handler = async (event) => {
           ? "rejected_financial"
           : "insufficient";
 
-    return send(200, {
+    return makeResponse(200, {
       symbol,
       status,
       activity: companyName,
@@ -232,7 +231,7 @@ exports.handler = async (event) => {
     }, headers);
 
   } catch (error) {
-    return send(500, {
+    return makeResponse(500, {
       error: "تعذر تشغيل الفحص الشرعي",
       details: error.message
     }, headers);
@@ -423,33 +422,18 @@ function findSharesOutstanding(text, usgaap, dei, filing) {
   );
   if (fact?.value > 1000) return fact.value;
 
-  const raw = String(text || "");
-
-  // SEC balance sheets often state the count as:
-  // "3,023,967 shares ... outstanding as of June 30, 2026".
-  // Read that form before trying older wording.
-  const directPatterns = [
-    /([0-9][0-9,]+)\s+(?:common\s+)?shares?\s+(?:issued\s+and\s+)?outstanding\s+as\s+of\s+[A-Z][a-z]+\s+\d{1,2},\s+20\d{2}/i,
-    /([0-9][0-9,]+)\s+shares?\s+(?:issued\s+and\s+)?outstanding\s+as\s+of\s+[A-Z][a-z]+\s+\d{1,2},\s+20\d{2}/i,
-    /([0-9][0-9,]+)\s+shares?[^.\n]{0,100}?outstanding\s+as\s+of\s+[A-Z][a-z]+\s+\d{1,2},\s+20\d{2}/i,
-    /as\s+of\s+[A-Z][a-z]+\s+\d{1,2},\s+20\d{2}[^.\n]{0,160}?([0-9][0-9,]+)\s+shares?[^.\n]{0,80}?outstanding/i
-  ];
-
-  for (const re of directPatterns) {
-    const m = raw.match(re);
-    if (!m) continue;
-    const n = parseNumber(m[1]);
-    if (n > 1000) return n;
-  }
-
   const patterns = [
+    /([0-9][0-9,]+)\s+(?:common\s+)?shares?\s+(?:issued\s+and\s+)?outstanding\s+as\s+of\s+[A-Z][a-z]+\s+\d{1,2},\s+20\d{2}/i,
+    /([0-9][0-9,]+)\s+shares?[^\n]{0,100}?outstanding\s+as\s+of\s+[A-Z][a-z]+\s+\d{1,2},\s+20\d{2}/i,
+    /as of [A-Z][a-z]+\s+\d{1,2},\s+20\d{2}[^\n]{0,220}?there were\s+([0-9][0-9,]+)\s+shares?[^\n]{0,80}?outstanding/i,
+    /as of [A-Z][a-z]+\s+\d{1,2},\s+20\d{2}[^\n]{0,220}?([0-9][0-9,]+)\s+shares?[^\n]{0,80}?outstanding/i,
     /there were\s+([0-9][0-9,]+)\s+(?:shares?|shares? of (?:the )?(?:registrant's|registrant) common stock)[^\n]{0,80}?outstanding/i,
     /([0-9][0-9,]+)\s+Class\s+A[^\n]{0,100}?and\s+([0-9][0-9,]+)\s+Class\s+B[^\n]{0,100}?issued and outstanding/i,
-    /as of [A-Z][a-z]+\s+\d{1,2},\s+20\d{2}[^\n]{0,180}?([0-9][0-9,]+)\s+Class\s+A[^\n]{0,100}?([0-9][0-9,]+)\s+Class\s+B/i
+    /as of [A-Z][a-z]+\s+\d{1,2},\s+20\d{2}[^\n]{0,120}?([0-9][0-9,]+)\s+Class\s+A[^\n]{0,100}?([0-9][0-9,]+)\s+Class\s+B/i
   ];
 
   for (const re of patterns) {
-    const m = raw.match(re);
+    const m = text.match(re);
     if (!m) continue;
     if (m.length === 2) {
       const n = parseNumber(m[1]);
@@ -527,6 +511,10 @@ function findInterestBearingDebt(text, usgaap, filing) {
     }
   }
 
+  if (/\\btotal liabilities\\b/i.test(text) && /\\btotal assets\\b/i.test(text)) {
+    return {value:0,source:"SEC balance sheet — no interest-bearing debt line disclosed"};
+  }
+
   return null;
 }
 function extractLabeledAmount(text, regex) {
@@ -563,11 +551,8 @@ function findInterestTakingDeposits(text, usgaap, filing) {
   }
 
   // Ordinary cash is NOT treated as an interest-taking deposit merely because
-  // it appears on the balance sheet. If the selected SEC balance sheet is
-  // complete and contains no interest-bearing-deposit line, record zero
-  // rather than making the whole AAOIFI screen "insufficient".
-  // This is deliberately different from treating cash itself as a deposit.
-  if (/\btotal assets\b/i.test(text) && /\btotal liabilities\b/i.test(text)) {
+  // it appears on the balance sheet. No explicit disclosure = insufficient.
+  if (/\\btotal assets\\b/i.test(text) && /\\btotal liabilities\\b/i.test(text)) {
     return {
       value: 0,
       source: "SEC balance sheet — no interest-bearing deposits disclosed"
@@ -783,16 +768,13 @@ function findProhibitedIncome(text, usgaap, filing) {
     }
   }
 
-  // If a complete statement of operations is present but there is no
-  // interest-income row, the disclosed prohibited-interest component is zero.
-  // Do not manufacture a value from total other income or fair-value gains.
   if (/statements of operations/i.test(raw) &&
-      /(?:sales|revenue|revenues)\b/i.test(raw) &&
-      /(?:net loss|loss before income taxes)\b/i.test(raw)) {
+      /(?:sales|revenue|revenues)\\b/i.test(raw) &&
+      /(?:net loss|loss before income taxes)\\b/i.test(raw)) {
     return {
       value: 0,
-      label:"No interest income disclosed",
-      source:"SEC Statement of Operations — no interest income line disclosed"
+      label: "No interest income disclosed",
+      source: "SEC Statement of Operations — no interest income line disclosed"
     };
   }
 
@@ -1007,3 +989,222 @@ function firstFinancialValueAfterLabel(line, labelRegex) {
     if (Number.isFinite(n)) return n;
   }
   return null;
+}
+
+function inferLineScale(lines, index) {
+  const start = Math.max(0, index - 40);
+  for (let i = index; i >= start; i--) {
+    if (/\bin thousands\b|\bin thousands,|\(in thousands\b/i.test(lines[i])) return 1000;
+    if (/\bin millions\b|\(in millions\b/i.test(lines[i])) return 1000000;
+  }
+  return 1;
+}
+
+function latestFactFromFacts(names, primaryFacts, secondaryFacts, filing) {
+  const all = { ...(secondaryFacts || {}), ...(primaryFacts || {}) };
+
+  for (const name of names) {
+    const fact = all[name];
+    if (!fact?.units) continue;
+
+    for (const unit of Object.values(fact.units)) {
+      if (!Array.isArray(unit)) continue;
+
+      const candidates = unit
+        .filter(x =>
+          (!filing.accession || String(x.accn || "") === String(filing.accession)) &&
+          Number.isFinite(Number(x.val))
+        )
+        .sort((a, b) => String(b.filed || "").localeCompare(String(a.filed || "")));
+
+      if (candidates.length) {
+        return {
+          value: Number(candidates[0].val),
+          tag: name
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+async function getCurrentMarketData(symbol) {
+  const headers = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.nasdaq.com",
+    "Referer": "https://www.nasdaq.com/market-activity/stocks/screener"
+  };
+
+  // NTCL and CRIS are Nasdaq-listed, so avoid downloading three full
+  // exchange screeners on every request.
+  try {
+    const url =
+      "https://api.nasdaq.com/api/screener/stocks" +
+      "?tableonly=true&limit=5000&offset=0&exchange=NASDAQ&download=true";
+
+    const response = await fetch(url, { headers });
+    if (response.ok) {
+      const json = await response.json();
+      const rows = Array.isArray(json?.data?.rows) ? json.data.rows : [];
+      const q = rows.find(x => String(x.symbol || "").trim().toUpperCase() === symbol);
+      if (q) {
+        const price = parseMarketNumber(q.lastsale);
+        const marketCap = parseMarketNumber(q.marketCap);
+        const shares = parseMarketNumber(q.sharesOutstanding ?? q.sharesoutstanding);
+        return {
+          price: Number.isFinite(price) && price > 0 ? price : null,
+          marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
+          shares: Number.isFinite(shares) && shares > 0 ? shares : null,
+          source: "Nasdaq Screener"
+        };
+      }
+    }
+  } catch (_) {}
+
+  try {
+    const url =
+      "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
+      encodeURIComponent(symbol);
+
+    const response = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }
+    });
+    if (!response.ok) return null;
+
+    const json = await response.json();
+    const q = json?.quoteResponse?.result?.[0];
+    if (!q) return null;
+
+    const price = Number(q.regularMarketPrice ?? q.postMarketPrice);
+    const marketCap = Number(q.marketCap);
+    const shares = Number(q.sharesOutstanding);
+
+    const safePrice = Number.isFinite(price) && price > 0 ? price : null;
+    const safeShares = Number.isFinite(shares) && shares > 0 ? shares : null;
+    const safeMarketCap =
+      Number.isFinite(marketCap) && marketCap > 0
+        ? marketCap
+        : (safePrice && safeShares ? safePrice * safeShares : null);
+
+    return {
+      price: safePrice,
+      marketCap: safeMarketCap,
+      shares: safeShares,
+      source: "Yahoo Finance"
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function getCurrentPrice(symbol) {
+  const url =
+    "https://query1.finance.yahoo.com/v8/finance/chart/" +
+    encodeURIComponent(symbol) +
+    "?range=1d&interval=1m";
+
+  const response = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }
+  });
+
+  if (!response.ok) throw new Error("تعذر جلب السعر الحالي");
+  const json = await response.json();
+  return Number(json?.chart?.result?.[0]?.meta?.regularMarketPrice) || null;
+}
+
+async function fetchJson(url, headers) {
+  const response = await fetch(url, { headers });
+  if (!response.ok) throw new Error("تعذر جلب بيانات SEC");
+  return response.json();
+}
+
+async function fetchText(url, headers) {
+  const response = await fetch(url, { headers });
+  if (!response.ok) throw new Error("تعذر جلب ملف الإفصاح المالي من SEC");
+  return response.text();
+}
+
+function cleanText(html) {
+  return decodeHtml(
+    String(html || "")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      // Preserve SEC table cell and row boundaries. This is important because
+      // the first numeric cell is the current-quarter value.
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/td>/gi, " | ")
+      .replace(/<\/th>/gi, " | ")
+      .replace(/<\/tr>/gi, "\n")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<\/div>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/[\u00a0\t]+/g, " ")
+      .replace(/[ ]{2,}/g, " ")
+  );
+}
+
+function normalizeLine(s) {
+  return String(s || "")
+    .replace(/\s+/g, " ")
+    .replace(/[|]+/g, " ")
+    .trim();
+}
+
+function numbersFromLine(line) {
+  const matches = String(line || "").match(/\(?-?\$?\s*[0-9][0-9,]*(?:\.\d+)?\)?/g) || [];
+  return matches
+    .map(parseNumber)
+    .filter(Number.isFinite)
+    .filter(n => Math.abs(n) > 0);
+}
+
+function parseNumber(raw) {
+  let s = String(raw || "").replace(/[$,%\s]/g, "");
+  let negative = /^\(.*\)$/.test(s);
+  s = s.replace(/[()]/g, "").replace(/,/g, "");
+  const n = Number(s);
+  return negative ? -n : n;
+}
+
+function parseMarketNumber(raw) {
+  if (raw == null) return null;
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+
+  let s = String(raw).trim().replace(/[$,\s]/g, "");
+  if (!s || s === "-" || s === "—" || s.toLowerCase() === "n/a") return null;
+
+  let multiplier = 1;
+  const suffix = s.slice(-1).toUpperCase();
+  if (suffix === "K") multiplier = 1e3;
+  else if (suffix === "M") multiplier = 1e6;
+  else if (suffix === "B") multiplier = 1e9;
+  else if (suffix === "T") multiplier = 1e12;
+
+  if (multiplier !== 1) s = s.slice(0, -1);
+  const n = Number(s.replace(/\((.*)\)/, "-$1"));
+  return Number.isFinite(n) ? n * multiplier : null;
+}
+
+function decodeHtml(s) {
+  return String(s || "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
+function publicFiling(filing) {
+  return {
+    form: filing.form,
+    filingDate: filing.filingDate,
+    reportDate: filing.reportDate,
+    accession: filing.accession,
+    primaryDocument: filing.primaryDocument
+  };
+}
+
