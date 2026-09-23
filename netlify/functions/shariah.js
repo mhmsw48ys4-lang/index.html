@@ -946,7 +946,10 @@ function findTotalIncome(text, usgaap, filing) {
 }
 function findLabeledFinancialValue(text, labelRegex) {
   const raw = String(text || "");
-  const re = new RegExp(labelRegex.source + "[\\s\\S]{0,260}", labelRegex.flags.includes("i") ? labelRegex.flags : labelRegex.flags + "i");
+  // Preserve all regex flags (especially m) so row labels anchored with ^
+  // can be found after the SEC HTML has been flattened into one section.
+  const flags = labelRegex.flags.includes("i") ? labelRegex.flags : labelRegex.flags + "i";
+  const re = new RegExp(labelRegex.source + "[\\s\\S]{0,260}", flags);
   const m = raw.match(re);
   if (!m) return null;
 
