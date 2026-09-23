@@ -57,16 +57,10 @@ exports.handler = async (event) => {
     );
   }
 
-  function nasdaqDate(dateString) {
-    const [yyyy, mm, dd] = dateString.split("-");
-    return mm + "/" + dd + "/" + yyyy;
-  }
-
-  async function fetchRange(rangeFrom, rangeTo) {
+  async function fetchDay(day) {
     const url =
       "https://api.nasdaq.com/api/calendar/splits" +
-      "?fromdate=" + encodeURIComponent(nasdaqDate(rangeFrom)) +
-      "&todate=" + encodeURIComponent(nasdaqDate(rangeTo)) +
+      "?date=" + encodeURIComponent(day) +
       "&limit=5000";
 
     const response = await fetch(url, {
@@ -85,22 +79,30 @@ exports.handler = async (event) => {
     return normalizeRows(json?.data?.rows || []);
   }
 
+  function dateList(from, to) {
+    const out = [];
+    let d = new Date(from + "T00:00:00Z");
+    const end = new Date(to + "T00:00:00Z");
+    while (d <= end) {
+      out.push(d.toISOString().slice(0,10));
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+    return out;
+  }
+
   try {
     /*
-      Nasdaq's calendar endpoint can return only a limited slice when a
-      large historical range is requested. Split the requested period into
-      10-day windows, then merge and deduplicate the results.
+      The Nasdaq calendar endpoint is reliable for a specific date.
+      Query each day in the requested rolling window, in small parallel
+      batches, then merge and deduplicate the split events.
     */
     const all = [];
-    let cursor = from;
+    const days = dateList(from, to);
 
-    while (cursor <= to) {
-      const chunkTo = addDays(cursor, 9) < to ? addDays(cursor, 9) : to;
-      const rows = await fetchRange(cursor, chunkTo);
-      all.push(...rows);
-
-      if (chunkTo === to) break;
-      cursor = addDays(chunkTo, 1);
+    for (let i = 0; i < days.length; i += 10) {
+      const batch = days.slice(i, i + 10);
+      const results = await Promise.all(batch.map(fetchDay));
+      for (const rows of results) all.push(...rows);
     }
 
     const unique = {};
