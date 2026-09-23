@@ -557,28 +557,31 @@ function getPrimaryOperationsStatementSection(text) {
   const raw = String(text || "");
   const marker = /(?:condensed (?:consolidated )?)?statements of operations(?: and comprehensive (?:loss|income))?/gi;
   let m;
+  let best = null;
+  let bestScore = -1;
 
-  // SEC filings often mention the statement first in the table of contents.
-  // We must skip that occurrence and select the actual financial table.
   while ((m = marker.exec(raw))) {
     const tail = raw.slice(m.index, m.index + 160000);
-    // Do not let "and Comprehensive Loss" inside the statement title itself
-    // terminate the section. Search for the end marker only after the title.
     const afterTitle = tail.slice(m[0].length);
     const stop = afterTitle.search(/(?:condensed )?(?:statements of cash flows|statements of comprehensive (?:loss|income)|notes to (?:condensed )?financial statements)/i);
     const section = stop > 0 ? afterTitle.slice(0, stop) : afterTitle;
 
-    const hasPeriodHeader =
-      /three months ended|three and six months ended|quarter ended|months ended/i.test(section);
-    const hasIncomeRows =
-      /(?:^|\n)\s*(?:sales|revenue|net sales|interest income|dividend income)\b/i.test(section);
-    const numberCount =
-      (section.match(/(?:\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?|—|–)/g) || []).length;
+    const score =
+      (/(?:three months ended|three and six months ended|quarter ended|months ended)/i.test(section) ? 3 : 0) +
+      (/(?:^|\n)\s*Sales\s*(?:\||$)/im.test(section) ? 4 : 0) +
+      (/(?:^|\n)\s*Interest income\b/im.test(section) ? 4 : 0) +
+      (/(?:^|\n)\s*Total operating expenses\b/im.test(section) ? 2 : 0) +
+      (/(?:^|\n)\s*Loss from operations\b/im.test(section) ? 2 : 0) +
+      (/(?:^|\n)\s*Total other income \(expense\), net\b/im.test(section) ? 2 : 0) +
+      (/(?:^|\n)\s*Net loss\b/im.test(section) ? 2 : 0);
 
-    if (hasPeriodHeader && hasIncomeRows && numberCount >= 8) return section;
+    if (score > bestScore) {
+      bestScore = score;
+      best = section;
+    }
   }
 
-  return null;
+  return bestScore >= 8 ? best : null;
 }
 
 function extractStatementRowValues(text, labelRegex) {
@@ -644,122 +647,58 @@ function extractStatementAmount(text, labelPattern) {
 
 function extractSecCurrentQuarterIncomeComponents(text) {
   const raw = String(text || "");
+  const source = getPrimaryOperationsStatementSection(raw) || raw;
 
-  // One deterministic parser for SEC tables. It does not depend on a
-  // particular statement-title layout. We first isolate the Operations
-  // statement, then read the first numeric cell after each exact row label.
-  // Select the actual Operations statement, not the table-of-contents
-  // occurrence that appears earlier in many SEC filings.
-  const primarySection = getPrimaryOperationsStatementSection(raw);
-  const source = primarySection || raw;
+  // SEC HTML is converted to text with one line per table row. After
+  // normalizeLine(), a row looks like:
+  // Sales $ 331,827 409,268 ...
+  // Interest income 19,694 17,144 ...
+  // Therefore use the FIRST numeric value on the matching row. This avoids
+  // brittle dependence on the exact number of "|" cells in SEC HTML.
+  const lines = source
+    .split(/\r?\n/)
+    .map(normalizeLine)
+    .filter(Boolean);
 
-  const row = (label) => {
-    const re = new RegExp(
-      "(?:^|\\n)\\s*" +
-      label +
-      "\\s*(?:\\|\\s*)+" +
-      "(?:\\$\\s*\\|\\s*)*" +
-      "([0-9][0-9,]*(?:\\.\\d+)?)",
-      "im"
-    );
-
-    const m = source.match(re);
-    return m ? Math.abs(parseNumber(m[1])) : null;
+  const firstValueOnRow = (labelRegex) => {
+    for (const line of lines) {
+      if (!labelRegex.test(line)) continue;
+      const after = line.replace(labelRegex, " ");
+      const matches = after.match(/\(?\$?\s*[0-9][0-9,]*(?:\.\d+)?\)?/g) || [];
+      for (const token of matches) {
+        const value = Math.abs(parseNumber(token));
+        if (Number.isFinite(value)) return value;
+      }
+    }
+    return null;
   };
 
   const components = [];
+  const add = (key, value) => {
+    if (value != null && Number.isFinite(value) && value > 0) {
+      components.push({ key, value });
+    }
+  };
 
-  const sales = row("Sales");
-  if (sales != null && sales > 0) {
-    components.push({ key: "sales", value: sales });
-  }
+  add("sales", firstValueOnRow(/^Sales\b(?!\s+and\s+marketing)/i));
+  add("interest", firstValueOnRow(/^Interest income(?:,\s*net)?\b/i));
+  add("dividend", firstValueOnRow(/^Dividend income\b/i));
+  add("conversion", firstValueOnRow(/^Change in fair value of conversion option liability\b/i));
+  add("warrants", firstValueOnRow(/^Change in fair value of warrants liabilities?\b/i));
 
-  const interest = row("Interest income(?:,\\s*net)?");
-  if (interest != null && interest > 0) {
-    components.push({ key: "interest", value: interest });
-  }
-
-  const dividend = row("Dividend income");
-  if (dividend != null && dividend > 0) {
-    components.push({ key: "dividend", value: dividend });
-  }
-
-  const conversion = row("Change in fair value of conversion option liability");
-  if (conversion != null && conversion > 0) {
-    components.push({ key: "conversion", value: conversion });
-  }
-
-  const warrants = row("Change in fair value of warrants liabilities?");
-  if (warrants != null && warrants > 0) {
-    components.push({ key: "warrants", value: warrants });
-  }
-
-  const unique = [];
-  const seen = new Set();
-
-  for (const item of components) {
-    if (seen.has(item.key)) continue;
-    seen.add(item.key);
-    unique.push(item);
-  }
-
-  const foundInterest = unique.find(x => x.key === "interest")?.value ?? null;
-  const foundSales = unique.find(x => x.key === "sales")?.value ?? null;
+  const foundInterest = components.find(x => x.key === "interest")?.value ?? null;
+  const foundSales = components.find(x => x.key === "sales")?.value ?? null;
 
   if (foundSales != null && foundInterest != null) {
     return {
-      total: unique.reduce((sum, x) => sum + x.value, 0),
+      total: components.reduce((sum, x) => sum + x.value, 0),
       interest: foundInterest,
-      components: unique
-    };
-  }
-
-  // Last fallback for SEC rows where the label and first cells are not
-  // separated by a newline after HTML cleaning.
-  const flat = (label) => {
-    const re = new RegExp(
-      label +
-      "\\s*(?:\\|\\s*)+" +
-      "(?:\\$\\s*\\|\\s*)*" +
-      "([0-9][0-9,]*(?:\\.\\d+)?)",
-      "i"
-    );
-    const m = source.match(re);
-    return m ? Math.abs(parseNumber(m[1])) : null;
-  };
-
-  const flatSales = foundSales ?? flat("Sales");
-  const flatInterest = foundInterest ?? flat("Interest income(?:,\\s*net)?");
-
-  if (flatSales != null && flatInterest != null) {
-    const fallback = [
-      { key: "sales", value: flatSales },
-      { key: "interest", value: flatInterest }
-    ];
-
-    const extra = [
-      ["dividend", "Dividend income"],
-      ["conversion", "Change in fair value of conversion option liability"],
-      ["warrants", "Change in fair value of warrants liabilities?"]
-    ];
-
-    for (const [key, label] of extra) {
-      const value = flat(label);
-      if (value != null && value > 0) {
-        fallback.push({ key, value });
-      }
-    }
-
-    return {
-      total: fallback.reduce((sum, x) => sum + x.value, 0),
-      interest: flatInterest,
-      components: fallback
+      components
     };
   }
 
   return null;
 }
-
 function findProhibitedIncome(text, usgaap, filing) {
   const parsed = extractSecCurrentQuarterIncomeComponents(text);
   if (parsed?.interest != null) {
