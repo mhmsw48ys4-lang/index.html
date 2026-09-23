@@ -664,7 +664,7 @@ function findLabeledFinancialValue(text, labelRegex) {
   if (!labelMatch) return null;
 
   const tail = m[0].slice(labelMatch.index + labelMatch[0].length);
-  const tokens = tail.match(/(?:—|–|\\$?\\s*\\(?[0-9][0-9,]*(?:\\.\\d+)?\\)?)/g) || [];
+  const tokens = tail.match(/(?:—|–|-|\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?)/g) || [];
 
   for (const token of tokens) {
     const t = String(token).trim();
