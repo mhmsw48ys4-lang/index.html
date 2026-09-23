@@ -11,7 +11,7 @@ exports.handler = async (event) => {
   try {
     // قوائم Yahoo الجاهزة تعمل عبر GET ولا تحتاج custom screener.
     // نجمع عدة قوائم لتكوين كون مرشحين واسع، ثم index.html يفحص
-    // القاع وثبات 3-4 أيام.
+    // القاع والثبات 3 أيام أو أكثر. المرشح: سعر $1-$7 وقيمة سوقية <= $10M.
     const screens = [
       "most_actives",
       "small_cap_gainers",
@@ -50,11 +50,7 @@ exports.handler = async (event) => {
       for (const q of item.value) {
         const symbol = String(q.symbol || "").trim().toUpperCase();
         const price = Number(q.regularMarketPrice);
-        const avgVol = Number(
-          q.averageDailyVolume3Month ??
-          q.averageDailyVolume10Day ??
-          0
-        );
+        const marketCap = Number(q.marketCap);
 
         if (
           symbol &&
@@ -62,7 +58,8 @@ exports.handler = async (event) => {
           Number.isFinite(price) &&
           price >= 1 &&
           price <= 7 &&
-          avgVol >= 100000
+          Number.isFinite(marketCap) &&
+          marketCap <= 10000000
         ) {
           map.set(symbol, q);
         }
