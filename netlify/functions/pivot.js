@@ -12,57 +12,88 @@ exports.handler = async (event) => {
     // قوائم Yahoo الجاهزة تعمل عبر GET ولا تحتاج custom screener.
     // نجمع عدة قوائم لتكوين كون مرشحين واسع، ثم index.html يفحص
     // القاع والثبات 3 أيام أو أكثر. المرشح: سعر $1-$7 وقيمة سوقية <= $10M.
-    const screens = [
-      "most_actives",
-      "small_cap_gainers",
-      "aggressive_small_caps",
-      "day_gainers",
-      "day_losers"
-    ];
+    // نستخدم Yahoo Custom Screener مباشرة بدل القوائم الجاهزة.
+    // القوائم الجاهزة تضع حدوداً سوقية كبيرة، لذلك كانت ترجع قائمة فارغة
+    // بعد شرطنا <= $10M.
+    const screenBody = {
+      offset: 0,
+      size: 250,
+      sortField: "eodvolume",
+      sortType: "DESC",
+      quoteType: "EQUITY",
+      query: {
+        operator: "AND",
+        operands: [
+          {
+            operator: "EQ",
+            operands: ["region", "us"]
+          },
+          {
+            operator: "GTE",
+            operands: ["intradayprice", 1]
+          },
+          {
+            operator: "LTE",
+            operands: ["intradayprice", 7]
+          },
+          {
+            operator: "LTE",
+            operands: ["intradaymarketcap", 10000000]
+          },
+          {
+            operator: "IS-IN",
+            operands: ["exchange", "NMS", "NYQ"]
+          }
+        ]
+      },
+      userId: "",
+      userIdType: "guid"
+    };
 
-    async function getScreen(scrId) {
-      const bases = [
-        "https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved",
-        "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
+    async function getCandidates() {
+      const urls = [
+        "https://query2.finance.yahoo.com/v1/finance/screener",
+        "https://query1.finance.yahoo.com/v1/finance/screener"
       ];
+
       let lastError = null;
 
-      for (const base of bases) {
+      for (const url of urls) {
         try {
-          const url =
-            base +
-            "?formatted=false&lang=en-US&region=US" +
-            "&scrIds=" + encodeURIComponent(scrId) +
-            "&count=250&start=0" +
-            "&corsDomain=finance.yahoo.com";
-
-          const response = await fetch(url, {
-            headers: {
-              "User-Agent": "Mozilla/5.0",
-              "Accept": "application/json,text/plain,*/*"
+          const response = await fetch(
+            url + "?formatted=false&lang=en-US&region=US&corsDomain=finance.yahoo.com",
+            {
+              method: "POST",
+              headers: {
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "application/json,text/plain,*/*",
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify(screenBody)
             }
-          });
+          );
 
           if (!response.ok) {
-            lastError = new Error(scrId + " HTTP " + response.status);
+            lastError = new Error("Yahoo screener HTTP " + response.status);
             continue;
           }
 
           const json = await response.json();
           const quotes = json?.finance?.result?.[0]?.quotes;
 
-          if (Array.isArray(quotes) && quotes.length) return quotes;
+          if (Array.isArray(quotes)) return quotes;
 
-          lastError = new Error(scrId + " returned no quotes");
+          lastError = new Error("Yahoo screener returned no quotes");
         } catch (e) {
           lastError = e;
         }
       }
 
-      throw lastError || new Error(scrId + " failed");
+      throw lastError || new Error("Yahoo screener failed");
     }
 
-    const lists = await Promise.allSettled(screens.map(getScreen));
+    const quotes = await getCandidates();
+
     const map = new Map();
 
     for (const item of lists) {
