@@ -223,7 +223,7 @@ function getDebt(facts, rows) {
   const x = instantFacts(facts, names);
   if (x) return x;
 
-  const re = /(convertible\\s+(notes?|debt)|notes?\\s+payable|term\\s+loans?|loans?\\s+payable|long[- ]term\\s+(debt|borrowings?)|short[- ]term\\s+(borrowings?|debt)|senior\\s+notes?|interest[- ]bearing\\s+debt)/i;
+  const re = /(convertible\s+(notes?|debt)|notes?\s+payable|term\s+loans?|loans?\s+payable|long[- ]term\s+(debt|borrowings?)|short[- ]term\s+(borrowings?|debt)|senior\s+notes?|interest[- ]bearing\s+debt)/i;
   const found = rows.filter(r => re.test(r.label) && r.values.length);
 
   if (!found.length) return null;
@@ -254,7 +254,7 @@ function getDeposits(facts, rows) {
   const x = instantFacts(facts, names);
   if (x) return x;
 
-  const re = /interest[- ]bearing\\s+(deposits?|securities|investments?)/i;
+  const re = /interest[- ]bearing\s+(deposits?|securities|investments?)/i;
   for (const r of rows) {
     if (re.test(r.label) && r.values.length) {
       return {
@@ -270,7 +270,7 @@ function getDeposits(facts, rows) {
 
 function getInterest(facts, rows) {
   for (const r of rows) {
-    if (/^interest\\s+income(?:,\\s*net)?$/i.test(r.label) && r.values.length) {
+    if (/^interest\s+income(?:,\s*net)?$/i.test(r.label) && r.values.length) {
       return {
         value: Math.abs(r.values[0]),
         label: r.label,
@@ -455,22 +455,22 @@ async function filingRows(cik, filing) {
 function parseRows(html) {
   const text = String(html || "");
   const rows = [];
-  const thousands = /(?:dollars?\\s+in\\s+thousands|\\bin\\s+thousands\\b)/i.test(text);
+  const thousands = /(?:dollars?\s+in\s+thousands|\bin\s+thousands\b)/i.test(text);
   const scale = thousands ? 1000 : 1;
-  const rowRe = /<tr\\b[^>]*>([\\s\\S]*?)<\\/tr>/gi;
+  const rowRe = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
 
   let rowMatch;
 
   while ((rowMatch = rowRe.exec(text))) {
     const cells = [];
-    const cellRe = /<(?:td|th)\\b[^>]*>([\\s\\S]*?)<\\/(?:td|th)>/gi;
+    const cellRe = /<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi;
     let cellMatch;
 
     while ((cellMatch = cellRe.exec(rowMatch[1]))) {
       const value = decode(cellMatch[1]
-        .replace(/<br\\s*\\/?>/gi, " ")
+        .replace(/<br\s*\/?>/gi, " ")
         .replace(/<[^>]+>/g, " ")
-      ).replace(/\\s+/g, " ").trim();
+      ).replace(/\s+/g, " ").trim();
 
       if (value) cells.push(value);
     }
@@ -492,13 +492,13 @@ function parseRows(html) {
 function toNumber(text) {
   const s = String(text || "")
     .replace(/,/g, "")
-    .replace(/\\$/g, "")
+    .replace(/\$/g, "")
     .trim();
 
   if (!s) return null;
 
-  const negative = /^\\(.*\\)$/.test(s);
-  const match = s.match(/[-+]?\\d+(?:\\.\\d+)?/);
+  const negative = /^\(.*\)$/.test(s);
+  const match = s.match(/[-+]?\d+(?:\.\d+)?/);
 
   if (!match) return null;
 
