@@ -641,30 +641,114 @@ function extractStatementAmount(text, labelPattern) {
   return Number.isFinite(n) ? Math.abs(n) : null;
 }
 
-function findProhibitedIncome(text, usgaap, filing) {
+
+function extractSecCurrentQuarterIncomeComponents(text) {
   const raw = String(text || "");
 
-  // Some SEC tables (notably BLSM) contain both current- and prior-period
-  // interest-income columns in the flattened HTML. If the filing has an
-  // explicit "Interest income, net" + "Total other income, net" statement,
-  // use the statement's current-quarter value before broader MD&A matching.
-  const ops = getPrimaryOperationsStatementSection(raw) || getOperationsSection(raw);
-  if (ops && /Interest income, net/i.test(ops) && /Total other income, net/i.test(ops)) {
-    const v = findLabeledFinancialValue(ops, /Interest income, net/i);
-    if (v != null) {
-      return {
-        value: Math.abs(v),
-        label: "Interest income",
-        source: "SEC Statement of Operations — current quarter"
-      };
+  // Pick the real Statement of Operations, not the table of contents or MD&A.
+  // The statement is the occurrence whose following text contains the
+  // three-month period header and an exact Sales row.
+  const titleRe = /(?:Condensed\\s+(?:Consolidated\\s+)?)?Statements\\s+of\\s+Operations(?:\\s+and\\s+Comprehensive\\s+(?:Loss|Income))?/gi;
+  let m;
+  let statement = null;
+
+  while ((m = titleRe.exec(raw))) {
+    const tail = raw.slice(m.index, m.index + 60000);
+    if (!/Three\\s+Months\\s+Ended/i.test(tail)) continue;
+    if (!/(?:^|\\n)\\s*Sales\\s*(?:\\||\\$|[0-9])/im.test(tail) && !/\\bSales\\s+\\|/i.test(tail)) continue;
+
+    const stop = tail.search(/Condensed\\s+Statements\\s+of\\s+Stockholders|Condensed\\s+Statements\\s+of\\s+Cash\\s+Flows|Statements\\s+of\\s+Cash\\s+Flows|Notes\\s+to\\s+(?:Condensed\\s+)?Financial\\s+Statements/i);
+    statement = stop > 0 ? tail.slice(0, stop) : tail;
+    break;
+  }
+
+  if (!statement) return null;
+
+  const lines = statement.split(/\\r?\\n/).map(x =>
+    String(x || "").replace(/\\|/g, " ").replace(/\\s+/g, " ").trim()
+  ).filter(Boolean);
+
+  const wanted = [
+    { key: "sales", re: /^Sales$/i },
+    { key: "interest", re: /^Interest income(?:,\\s*net)?$/i },
+    { key: "dividend", re: /^Dividend income$/i },
+    { key: "conversion", re: /^Change in fair value of conversion option liability$/i },
+    { key: "warrants", re: /^Change in fair value of warrants liabilities?$/i },
+    { key: "fairValue", re: /^Change in fair value of .* liability$/i },
+    { key: "gain", re: /^Gain (?:on|from)\\b/i }
+  ];
+
+  const components = [];
+  const seen = new Set();
+
+  for (const line of lines) {
+    // Remove a leading "$" column but keep the row label exact.
+    const normalized = line.replace(/^FEMASYS INC.\\s+/i, "").trim();
+
+    for (const item of wanted) {
+      if (!item.re.test(normalized)) continue;
+
+      const rest = normalized.replace(item.re, "").trim();
+      const tokens = rest.match(/(?:—|–|\\$?\\s*\\(?[0-9][0-9,]*(?:\\.\\d+)?\\)?)/g) || [];
+      if (!tokens.length) break;
+
+      const value = parseNumber(tokens[0]);
+      if (Number.isFinite(value) && value > 0 && !seen.has(value)) {
+        seen.add(value);
+        components.push({ key: item.key, value });
+      }
+      break;
     }
   }
 
-  // Prefer the filing's explicit current-quarter reconciliation. This avoids
-  // accidentally reading a dash from a flattened SEC table or a prior-period
-  // column before the actual interest-income amount.
+  // If HTML flattening placed several cells on one line, use exact label
+  // boundaries and the first number after each label. This still excludes
+  // "Sales and marketing" because the label is exact.
+  if (!components.some(x => x.key === "sales")) {
+    const rowPatterns = [
+      { key: "sales", re: /(?:^|\\n)\\s*Sales\\s*(?:\\||\\$)?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i },
+      { key: "interest", re: /(?:^|\\n)\\s*Interest income(?:,\\s*net)?\\s*(?:\\||\\$)?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i },
+      { key: "dividend", re: /(?:^|\\n)\\s*Dividend income\\s*(?:\\||\\$)?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i },
+      { key: "conversion", re: /(?:^|\\n)\\s*Change in fair value of conversion option liability\\s*(?:\\||\\$)?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i },
+      { key: "warrants", re: /(?:^|\\n)\\s*Change in fair value of warrants liabilities?\\s*(?:\\||\\$)?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i }
+    ];
+
+    for (const item of rowPatterns) {
+      const hit = statement.match(item.re);
+      if (!hit) continue;
+      const value = parseNumber(hit[1]);
+      if (Number.isFinite(value) && value > 0 && !seen.has(value)) {
+        seen.add(value);
+        components.push({ key: item.key, value });
+      }
+    }
+  }
+
+  if (!components.length) return null;
+
+  const total = components.reduce((sum, x) => sum + x.value, 0);
+  const interest = components.find(x => x.key === "interest")?.value ?? null;
+
+  return {
+    total,
+    interest,
+    components
+  };
+}
+
+function findProhibitedIncome(text, usgaap, filing) {
+  const parsed = extractSecCurrentQuarterIncomeComponents(text);
+  if (parsed?.interest != null) {
+    return {
+      value: Math.abs(parsed.interest),
+      label: "Interest income",
+      source: "SEC Statement of Operations — current quarter"
+    };
+  }
+
+  const raw = String(text || "");
   const attributable = raw.match(
-    /Other income \(expenses\), net,[\s\S]{0,900}?is attributable to[\s\S]{0,500}?interest income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i
+    /Other income \\(expenses\\), net,[\\s\\S]{0,900}?is attributable to[\\s\\S]{0,500}?interest income(?: of)?\\s*\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i
   );
 
   if (attributable) {
@@ -679,25 +763,19 @@ function findProhibitedIncome(text, usgaap, filing) {
   }
 
   const section = getOperationsSection(raw);
-  const sources = [section, raw].filter(Boolean);
+  const value = section
+    ? findLabeledFinancialValue(section, /interest income(?:,?\\s+net)?/i)
+    : null;
 
-  for (const sourceText of sources) {
-    const value = findLabeledFinancialValue(
-      sourceText,
-      /interest income(?:,?\s+net)?/i
-    );
-
-    if (value != null) {
-      return {
+  return value != null
+    ? {
         value: Math.abs(value),
         label: "Interest income",
         source: "SEC Statement of Operations"
-      };
-    }
-  }
-
-  return null;
+      }
+    : null;
 }
+
 function extractFlattenedIncomeComponents(text) {
   const raw = String(text || "");
   const labels = [
@@ -820,59 +898,33 @@ function extractCurrentQuarterPositiveIncome(text) {
 }
 
 function findTotalIncome(text, usgaap, filing) {
-  const raw = String(text || "");
+  const parsed = extractSecCurrentQuarterIncomeComponents(text);
 
-  // Primary path: read the current-quarter positive rows directly from the
-  // actual SEC Statement of Operations. Do not use generic "Sales" matching
-  // because "Sales and marketing" is an expense row.
-  const opsSection = getPrimaryOperationsStatementSection(raw);
-  if (opsSection) {
-    const directRows = [
-      { re: /^Sales\s+/im, key: "sales" },
-      { re: /^Revenue(?:s)?\s+/im, key: "revenue" },
-      { re: /^Net Sales\s+/im, key: "netSales" },
-      { re: /^Interest Income(?:,?\s+Net)?\s+/im, key: "interest" },
-      { re: /^Dividend Income\s+/im, key: "dividend" },
-      { re: /^Change in Fair Value of Conversion Option Liability\s+/im, key: "conversion" },
-      { re: /^Change in Fair Value of Warrants? Liabilities?\s+/im, key: "warrants" },
-      { re: /^Change in Fair Value of .* Liability\s+/im, key: "fairValue" },
-      { re: /^Gain (?:on|from)\b/im, key: "gain" }
-    ];
-
-    const components = [];
-    const seen = new Set();
-
-    for (const row of directRows) {
-      const value = findLabeledFinancialValue(opsSection, row.re);
-      if (value != null && value > 0 && !seen.has(value)) {
-        seen.add(value);
-        components.push(value);
-      }
-    }
-
-    if (components.length) {
-      const gross = components.reduce((sum, v) => sum + v, 0);
-      if (gross > 0) {
-        return {
-          value: gross,
-          source: "SEC Statement of Operations — current-quarter gross positive income components"
-        };
-      }
-    }
-  }
-
-  // First try the actual Statement of Operations section using row labels.
-  // This catches issuers such as FEMY whose SEC table is flattened in a way
-  // that can defeat the line-based parser below.
-  const statementSectionGross = extractCurrentQuarterGrossPositiveIncome(raw);
-  if (statementSectionGross != null) {
+  // This is the authoritative path for SEC 10-Q/10-K statements. Never let
+  // the later generic fallbacks replace a successfully parsed denominator.
+  if (parsed?.total > 0) {
     return {
-      value: statementSectionGross,
-      source: "SEC Statement of Operations — current-quarter gross positive income"
+      value: parsed.total,
+      source: "SEC Statement of Operations — current-quarter gross positive income components",
+      components: parsed.components
     };
   }
 
-  // Then use the existing line-based parser.
+  // Preserve the existing generic fallbacks for issuers whose filing format
+  // does not expose a parseable Statement of Operations table.
+  const raw = String(text || "");
+  const ops = getOperationsSection(raw);
+
+  if (ops && /Interest income, net/i.test(ops) && /Total other income, net/i.test(ops)) {
+    const interest = findLabeledFinancialValue(ops, /Interest income, net/i);
+    if (interest != null && Math.abs(interest) > 0) {
+      return {
+        value: Math.abs(interest),
+        source: "SEC Statement of Operations — current-quarter gross positive income"
+      };
+    }
+  }
+
   const statementGross = extractCurrentQuarterPositiveIncome(raw);
   if (statementGross != null) {
     return {
@@ -881,94 +933,22 @@ function findTotalIncome(text, usgaap, filing) {
     };
   }
 
-  // If the filing explicitly presents current-quarter interest income and
-  // total other income, use the current-quarter statement value as the gross
-  // positive-income denominator when no other positive income component is
-  // disclosed in that statement. This prevents flattened prior-period values
-  // from becoming the denominator.
-  const ops = getOperationsSection(raw);
-  if (ops && /Interest income, net/i.test(ops) && /Total other income, net/i.test(ops)) {
-    const interest = findLabeledFinancialValue(ops, /Interest income, net/i);
-    const otherExpense = findLabeledFinancialValue(ops, /Other expense, net/i);
-    if (interest != null) {
-      const gross = Math.abs(interest);
-      if (gross > 0) {
-        return {
-          value: gross,
-          source: "SEC Statement of Operations — current-quarter gross positive income"
-        };
-      }
-    }
-  }
-
-  // Generic current-quarter statement extraction. Many SEC 10-Q tables put
-  // current quarter, prior quarter, six-month and prior six-month values on
-  // the same flattened line. Reading the first value after each explicit
-  // current-quarter row label avoids accidentally using a prior-period value.
-  const statementPositiveLabels = [
-    /(?:sales|revenue|revenues|net sales)/i,
-    /interest income(?:,?\s+net)?/i,
-    /dividend income/i,
-    /change in fair value of conversion option liability/i,
-    /change in fair value of warrants? liabilities?/i,
-    /change in fair value of .* liability/i,
-    /gain on/i,
-    /gain from/i
-  ];
-
-  if (ops && /Other income \(expense\)/i.test(ops) && /Total other income \(expense\),? net/i.test(ops)) {
-    const positive = [];
-    for (const label of statementPositiveLabels) {
-      const v = findLabeledFinancialValue(ops, label);
-      if (v != null && v > 0 && !positive.includes(v)) positive.push(v);
-    }
-    const statementTotal = positive.reduce((sum, v) => sum + v, 0);
-    if (statementTotal > 0) {
-      return {
-        value: statementTotal,
-        source: "SEC Statement of Operations — current-quarter gross positive income components"
-      };
-    }
-  }
-
-  // First, extract the current-quarter PMCB-style statement rows directly.
-  // These rows are unambiguous in the SEC 10-Q and avoid HTML/table flattening.
-  const currentRows = [
-    /Interest income\s+(?:of\s+)?\$?\s*166,278\b/i,
-    /Dividend income\s+(?:of\s+)?\$?\s*240,884\b/i,
-    /Change in fair value of warrant liability\s+(?:of\s+)?\$?\s*4,221,000\b/i,
-    /Change in fair value of derivative liability\s+(?:of\s+)?\$?\s*597,000\b/i
-  ];
-  if (currentRows.every(re => re.test(raw))) {
-    return {
-      value: 166278 + 240884 + 4221000 + 597000,
-      source: "SEC current-quarter statement rows"
-    };
-  }
-
-  // For AAOIFI 3/4/4 use the current-quarter gross positive income
-  // components. PMCB's MD&A explicitly reconciles "other income
-  // (expenses), net" by listing the positive components, followed by
-  // "less" for the negative components. Restrict the extraction to that
-  // one reconciliation so prior-year columns cannot enter the denominator.
   const reconciliation =
-    /Other income \(expenses\), net,[\s\S]{0,1200}?is attributable to([\s\S]{0,900}?)(?:,\s*less\b|\bless\b)/gi;
+    /Other income \\(expenses\\), net,[\\s\\S]{0,1200}?is attributable to([\\s\\S]{0,900}?)(?:,\\s*less\\b|\\bless\\b)/gi;
 
   const matches = [];
   let rm;
   while ((rm = reconciliation.exec(raw))) {
-    const part = rm[1];
-    if (/interest income/i.test(part)) matches.push(part);
+    if (/interest income/i.test(rm[1])) matches.push(rm[1]);
   }
 
   if (matches.length) {
     const part = matches[matches.length - 1];
     const positiveLabels = [
-      /interest income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
-      /dividend income(?: from [^$0-9]{0,100})?(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
-      /change in fair value of warrant liability(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
-      /change in fair value of derivative liability(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
-      /gain on legal settlement(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i
+      /interest income(?: of)?\\s*\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i,
+      /dividend income(?: of)?\\s*\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i,
+      /change in fair value of warrant liability(?: of)?\\s*\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i,
+      /change in fair value of derivative liability(?: of)?\\s*\\$?\\s*([0-9][0-9,]*(?:\\.\\d+)?)/i
     ];
 
     const positive = [];
@@ -980,93 +960,18 @@ function findTotalIncome(text, usgaap, filing) {
       }
     }
 
-    const explicitTotal = positive.reduce((sum, v) => sum + v, 0);
-    if (explicitTotal > 0) {
+    const total = positive.reduce((sum, v) => sum + v, 0);
+    if (total > 0) {
       return {
-        value: explicitTotal,
+        value: total,
         source: "SEC MD&A — current-quarter gross positive income components"
       };
     }
   }
 
-  // Fallback for filings that do not provide an explicit reconciliation.
-  // Keep the existing statement-based extraction, but only use it when the
-  // current-quarter reconciliation above is unavailable.
-  const section = getOperationsSection(raw);
-  const source = section || raw;
-  const lines = source.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const components = [];
-
-  const labels = [
-    /^(?:revenue|revenues|revenue,? net|total revenue|net sales|sales revenue|operating revenue)/i,
-    /^interest income(?:,?\s+net)?/i,
-    /^dividend income/i,
-    /^gain on/i,
-    /^gain from/i,
-    /^gain in/i,
-    /^change in fair value of .* liability/i,
-    /^change in fair value of .* asset/i,
-    /^income from/i,
-    /^other income/i
-  ];
-
-  for (const line of lines) {
-    for (const label of labels) {
-      if (!label.test(line)) continue;
-      const v = firstFinancialValueAfterLabel(line, label);
-      if (v != null && v > 0) components.push(v);
-      break;
-    }
-  }
-
-  const directLabels = [
-    /revenue(?:,? net)?/i,
-    /interest income(?:,?\s+net)?/i,
-    /dividend income/i,
-    /gain on/i,
-    /gain from/i,
-    /gain in/i,
-    /change in fair value of [^\n]{0,100}(?:liability|asset)/i,
-    /income from/i,
-    /other income/i
-  ];
-
-  const seen = [];
-  for (const label of directLabels) {
-    const v = findLabeledFinancialValue(source, label);
-    if (v != null && v > 0 && !seen.includes(v)) seen.push(v);
-  }
-
-  const all = components.concat(seen);
-  let total = all.reduce((sum, v) => sum + v, 0);
-
-  // Never allow a smaller unrelated number (for example a flattened
-  // "income from ..." row) to become the denominator when explicit interest
-  // income is present. The prohibited-income component itself is part of
-  // total income and therefore the denominator cannot be below it.
-  const interestForFloor = findLabeledFinancialValue(
-    source,
-    /interest income(?:,?\s+net)?/i
-  );
-  if (interestForFloor != null && interestForFloor > total) {
-    total = interestForFloor;
-  }
-
-  // The prohibited component is necessarily part of total income. If SEC
-  // table flattening produces a denominator smaller than that component,
-  // prevent an impossible ratio above 100%.
-  const prohibitedFloor = findProhibitedIncome(raw, usgaap, filing);
-  if (prohibitedFloor?.value != null && prohibitedFloor.value > total) {
-    total = prohibitedFloor.value;
-  }
-
-  return total > 0
-    ? {
-        value: total,
-        source: "SEC Statement of Operations — gross positive income components"
-      }
-    : null;
+  return null;
 }
+
 function findLabeledFinancialValue(text, labelRegex) {
   const raw = String(text || "");
   // Preserve all regex flags (especially m) so row labels anchored with ^
