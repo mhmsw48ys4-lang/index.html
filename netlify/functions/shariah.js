@@ -1,4 +1,4 @@
-function makeResponse(statusCode, body, headers) {
+function response(statusCode, body, headers) {
   return {
     statusCode,
     headers,
@@ -6,128 +6,102 @@ function makeResponse(statusCode, body, headers) {
   };
 }
 
-exports.handler = async (event) => {
-  const headers = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Content-Type": "application/json; charset=utf-8"
-  };
+const HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Content-Type": "application/json; charset=utf-8"
+};
 
-  if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers, body: "" };
+exports.handler = async function (event) {
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 204, headers: HEADERS, body: "" };
+  }
 
   const symbol = String(event.queryStringParameters?.symbol || "").trim().toUpperCase();
-  if (!symbol) return makeResponse(400, { error: "اكتب رمز السهم" }, headers);
+  if (!symbol) return response(400, { error: "اكتب رمز السهم" }, HEADERS);
 
   try {
     const secHeaders = {
       "User-Agent": "khald-pivot-scanner contact@example.com",
-      "Accept": "application/json,text/plain,*/*"
+      "Accept": "text/html,application/json,text/plain,*/*"
     };
 
-    const tickerMap = await fetchJson("https://www.sec.gov/files/company_tickers.json", secHeaders);
-    let company = null;
+    const tickers = await getJson("https://www.sec.gov/files/company_tickers.json", secHeaders);
+    const company = Object.values(tickers || {}).find(
+      x => String(x.ticker || "").toUpperCase() === symbol
+    );
 
-    for (const item of Object.values(tickerMap || {})) {
-      if (String(item.ticker || "").toUpperCase() === symbol) {
-        company = item;
-        break;
-      }
+    if (!company) {
+      return response(404, { error: "لم نجد الشركة في سجلات SEC" }, HEADERS);
     }
 
-    if (!company) return makeResponse(404, { error: "لم نجد الشركة في سجلات SEC" }, headers);
-
     const cik = String(company.cik_str).padStart(10, "0");
-    const submissions = await fetchJson(
+    const submissions = await getJson(
       "https://data.sec.gov/submissions/CIK" + cik + ".json",
       secHeaders
     );
 
-    const recent = submissions?.filings?.recent || {};
-    const filing = await chooseLatestFinancialFiling(recent, cik, secHeaders);
-
+    const filing = latestFiling(submissions?.filings?.recent || {});
     if (!filing) {
-      return makeResponse(200, {
+      return response(200, {
         symbol,
         status: "insufficient",
         reason: "لم نجد آخر إفصاح مالي مناسب في SEC",
         source: "SEC EDGAR"
-      }, headers);
+      }, HEADERS);
     }
 
-    const accessionNoDash = String(filing.accession).replace(/-/g, "");
-    const cikNumber = String(Number(cik));
-    const baseUrl =
+    const base =
       "https://www.sec.gov/Archives/edgar/data/" +
-      cikNumber + "/" + accessionNoDash + "/";
+      String(Number(cik)) + "/" +
+      String(filing.accession).replace(/-/g, "") + "/";
 
-    // Prefer the filing's primary financial document for 10-Q/10-K filings.
-    // It is much smaller and more reliable on Netlify than downloading the
-    // complete SEC submission text. Fall back to the complete submission if
-    // the primary document is unavailable.
-    const submissionUrl = baseUrl + String(filing.accession) + ".txt";
     const primaryUrl = filing.primaryDocument
-      ? baseUrl + String(filing.primaryDocument)
-      : null;
+      ? base + filing.primaryDocument
+      : base + filing.accession + ".txt";
 
-    let rawSubmission;
-    if (primaryUrl) {
-      try {
-        rawSubmission = await fetchText(primaryUrl, secHeaders);
-      } catch (_) {
-        rawSubmission = await fetchText(submissionUrl, secHeaders);
-      }
-    } else {
-      rawSubmission = await fetchText(submissionUrl, secHeaders);
+    let filingHtml;
+    try {
+      filingHtml = await getText(primaryUrl, secHeaders);
+    } catch (_) {
+      filingHtml = await getText(
+        base + filing.accession + ".txt",
+        secHeaders
+      );
     }
 
-    const filingText = cleanText(rawSubmission);
+    const rows = extractRows(filingHtml);
+    const text = htmlToText(filingHtml);
 
-    // Companyfacts is still used when available, but it is no longer the only
-    // source. Many small/foreign issuers use custom XBRL concepts or put the
-    // financial statements in 6-K exhibits.
-    // Keep the function fast and deterministic: use the selected filing text
-    // as the primary source. Companyfacts can be a very large response and
-    // was causing Netlify execution failures on small issuers.
-    const usgaap = {};
-    const dei = {};
+    const market = await getMarket(symbol);
+    const price = market?.price ?? null;
 
-    const liveMarket = await getCurrentMarketData(symbol);
-    const currentPrice = liveMarket?.price ?? await getCurrentPrice(symbol);
+    let shares = market?.shares ?? null;
+    if (!(shares > 0)) shares = extractShares(text);
 
-    let shares = liveMarket?.shares ?? null;
-    if (!(Number.isFinite(shares) && shares > 0)) {
-      shares = findSharesOutstanding(filingText, usgaap, dei, filing);
-    }
-
-    // AAOIFI denominator: prefer a live market-cap field. If the quote
-    // provider does not return market cap, calculate it from the current
-    // price and the latest share-count disclosure in the selected filing.
-    let marketCap = liveMarket?.marketCap ?? null;
-    if (!(Number.isFinite(marketCap) && marketCap > 0) &&
-        Number.isFinite(currentPrice) && currentPrice > 0 &&
-        Number.isFinite(shares) && shares > 0) {
-      marketCap = currentPrice * shares;
+    let marketCap = market?.marketCap ?? null;
+    if (!(marketCap > 0) && price > 0 && shares > 0) {
+      marketCap = price * shares;
     }
 
     const sic = String(submissions.sic || "");
     const sicDescription = String(submissions.sicDescription || "");
     const companyName = String(submissions.name || company.name || "");
 
-    // 3/4/1 is an activity/objective screen. SIC is only a conservative
-    // first-pass signal; ambiguous cases are not rejected solely by SIC.
-    const prohibitedWords = [
+    const blockedWords = [
       "bank", "banking", "insurance", "casino", "gambling",
       "tobacco", "cigarette", "cannabis", "marijuana",
       "liquor", "distillery", "brewery", "beer", "wine",
       "pork", "swine", "adult entertainment"
     ];
 
-    const activityText = (companyName + " " + sicDescription).toLowerCase();
-    const wordBlocked = prohibitedWords.some(w => activityText.includes(w));
+    const activityBlocked = blockedWords.some(
+      w => (companyName + " " + sicDescription).toLowerCase().includes(w)
+    );
 
-    if (wordBlocked) {
-      return makeResponse(200, {
+    if (activityBlocked) {
+      return response(200, {
         symbol,
         status: "rejected_activity",
         activity: companyName,
@@ -135,41 +109,38 @@ exports.handler = async (event) => {
         sicDescription,
         filing: publicFiling(filing),
         marketCap,
-        marketCapDate: new Date().toISOString(),
-        marketCapSource: liveMarket?.source || null,
-        currentPrice,
+        currentPrice: price,
         sharesOutstanding: shares,
-        reason: "النشاط الأساسي يحتاج رفضاً في الفحص الأولي وفق التصنيف الظاهر في SEC"
-      }, headers);
+        marketCapSource: market?.source || null
+      }, HEADERS);
     }
 
-    // AAOIFI 3/4/2: interest-bearing debt, long or short term, <= 30% of
-    // market capitalization. We deliberately do NOT count accounts payable,
-    // ordinary lease liabilities, or generic total liabilities.
-    const debt = findInterestBearingDebt(filingText, usgaap, filing);
+    const debt = findDebt(rows, text);
+    const deposits = findDeposits(rows, text);
+    const interest = findRowValue(rows, /^interest income(?:,?\s+net)?$/i);
+    const sales = findRowValue(rows, /^(?:sales|net sales|revenue|revenues)$/i);
 
-    // AAOIFI 3/4/3: interest-taking deposits <= 30% of market capitalization.
-    // Ordinary cash is NOT automatically treated as interest-taking deposits.
-    const interestDeposits = findInterestTakingDeposits(filingText, usgaap, filing);
+    const prohibitedIncome = interest != null
+      ? { value: Math.abs(interest), label: "Interest income", source: "SEC Statement of Operations — current quarter" }
+      : hasOperationsData(rows, text)
+        ? { value: 0, label: "No interest income disclosed", source: "SEC Statement of Operations — no interest income line disclosed" }
+        : null;
 
-    // AAOIFI 3/4/4: prohibited income <= 5% of total income. Interest income
-    // is the main explicitly identifiable prohibited component in ordinary
-    // operating companies; other prohibited income is also searched by label.
-    const prohibitedIncome = findProhibitedIncome(filingText, usgaap, filing);
-    const totalIncome = findTotalIncome(filingText, usgaap, filing);
+    const totalIncome = sales != null && sales > 0
+      ? { value: Math.abs(sales), source: "SEC Statement of Operations — current-quarter sales/revenue" }
+      : null;
 
     const debtRatio = debt && marketCap > 0
       ? (debt.value / marketCap) * 100
       : null;
 
-    const depositsRatio = interestDeposits && marketCap > 0
-      ? (interestDeposits.value / marketCap) * 100
+    const depositsRatio = deposits && marketCap > 0
+      ? (deposits.value / marketCap) * 100
       : null;
 
-    const prohibitedRatio =
-      prohibitedIncome && totalIncome && totalIncome.value !== 0
-        ? (Math.abs(prohibitedIncome.value) / Math.abs(totalIncome.value)) * 100
-        : null;
+    const prohibitedRatio = prohibitedIncome && totalIncome && totalIncome.value > 0
+      ? (prohibitedIncome.value / totalIncome.value) * 100
+      : null;
 
     const checks = {
       debt: {
@@ -177,42 +148,41 @@ exports.handler = async (event) => {
         denominator: marketCap,
         ratio: debtRatio,
         limit: 30,
-        pass: debtRatio != null ? debtRatio <= 30 : null,
+        pass: debtRatio == null ? null : debtRatio <= 30,
         source: debt?.source || null
       },
       interestTakingDeposits: {
-        numerator: interestDeposits?.value ?? null,
+        numerator: deposits?.value ?? null,
         denominator: marketCap,
         ratio: depositsRatio,
         limit: 30,
-        pass: depositsRatio != null ? depositsRatio <= 30 : null,
-        source: interestDeposits?.source || null
+        pass: depositsRatio == null ? null : depositsRatio <= 30,
+        source: deposits?.source || null
       },
       prohibitedIncome: {
         numerator: prohibitedIncome?.value ?? null,
         denominator: totalIncome?.value ?? null,
         ratio: prohibitedRatio,
         limit: 5,
-        pass: prohibitedRatio != null ? prohibitedRatio <= 5 : null,
+        pass: prohibitedRatio == null ? null : prohibitedRatio <= 5,
         source: prohibitedIncome?.source || null,
         incomeSource: prohibitedIncome?.label || null
       }
     };
 
     const complete =
-      marketCap != null &&
+      marketCap > 0 &&
       checks.debt.pass !== null &&
       checks.interestTakingDeposits.pass !== null &&
       checks.prohibitedIncome.pass !== null;
 
-    const status =
-      complete && Object.values(checks).every(x => x.pass)
+    const status = !complete
+      ? "insufficient"
+      : Object.values(checks).every(x => x.pass)
         ? "compliant"
-        : complete
-          ? "rejected_financial"
-          : "insufficient";
+        : "rejected_financial";
 
-    return makeResponse(200, {
+    return response(200, {
       symbol,
       status,
       activity: companyName,
@@ -220,896 +190,48 @@ exports.handler = async (event) => {
       sicDescription,
       filing: publicFiling(filing),
       marketCap,
-      marketCapDate: new Date().toISOString(),
-      currentPrice,
+      currentPrice: price,
       sharesOutstanding: shares,
-      marketCapSource: liveMarket?.source || null,
+      marketCapSource: market?.source || null,
       checks,
       note: complete
-        ? "تم استخراج البيانات من أحدث إفصاح مالي متاح، مع استخدام XBRL/نص الإفصاح عند الحاجة"
-        : "بعض البيانات لم يمكن تحديدها بثقة من أحدث إفصاح؛ لم يتم افتراض قيمة مفقودة"
-    }, headers);
-
+        ? "تم استخراج البيانات مباشرة من أحدث إفصاح SEC"
+        : "بعض البيانات لم يمكن تحديدها بثقة من أحدث إفصاح"
+    }, HEADERS);
   } catch (error) {
-    return makeResponse(500, {
+    return response(500, {
       error: "تعذر تشغيل الفحص الشرعي",
-      details: error.message
-    }, headers);
+      details: String(error?.message || error)
+    }, HEADERS);
   }
 };
 
-async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
+function latestFiling(recent) {
   const forms = recent.form || [];
   const accessions = recent.accessionNumber || [];
-  const primaryDocuments = recent.primaryDocument || [];
+  const docs = recent.primaryDocument || [];
   const filingDates = recent.filingDate || [];
   const reportDates = recent.reportDate || [];
-  const primaryDescriptions = recent.primaryDocDescription || [];
-  const candidates = [];
 
+  const candidates = [];
   for (let i = 0; i < forms.length; i++) {
     if (!["10-Q", "10-K", "20-F", "40-F"].includes(forms[i])) continue;
     candidates.push({
       form: forms[i],
       accession: accessions[i],
-      primaryDocument: primaryDocuments[i],
+      primaryDocument: docs[i],
       filingDate: filingDates[i],
-      reportDate: reportDates[i],
-      primaryDescription: primaryDescriptions[i] || "",
-      financialPeriod: reportDates[i] || null
+      reportDate: reportDates[i]
     });
   }
 
-  if (candidates.length) {
-    candidates.sort((a,b) =>
-      String(b.financialPeriod || b.reportDate || b.filingDate || "")
-        .localeCompare(String(a.financialPeriod || a.reportDate || a.filingDate || ""))
-    );
-    return candidates[0];
-  }
-
-  // For foreign issuers, many financial 6-Ks identify the reporting period
-  // directly in the primary-document filename (for example ntcl-20260331x6k.htm).
-  // Use that metadata first so we do not download several 8-10 MB submissions.
-  const sixKs = [];
-  for (let i = 0; i < forms.length && sixKs.length < 12; i++) {
-    if (forms[i] !== "6-K") continue;
-    const acc = String(accessions[i] || "");
-    const doc = String(primaryDocuments[i] || "");
-    if (!acc) continue;
-
-    const m = doc.match(/(20\d{2})(\d{2})(\d{2})/);
-    if (m) {
-      sixKs.push({
-        acc,
-        primaryDocument: doc,
-        filingDate: filingDates[i],
-        reportDate: m[1] + "-" + m[2] + "-" + m[3],
-        primaryDescription: primaryDescriptions[i] || "",
-        financialPeriod: m[1] + "-" + m[2] + "-" + m[3]
-      });
-    }
-  }
-
-  if (sixKs.length) {
-    sixKs.sort((a,b) =>
-      String(b.financialPeriod).localeCompare(String(a.financialPeriod)) ||
-      String(b.filingDate || "").localeCompare(String(a.filingDate || ""))
-    );
-    return { ...sixKs[0], form: "6-K" };
-  }
-
-  // Last resort for issuers whose 6-K filename does not expose the period.
-  const fallback = [];
-  for (let i = 0; i < forms.length && fallback.length < 2; i++) {
-    if (forms[i] !== "6-K") continue;
-    const acc = String(accessions[i] || "");
-    if (!acc) continue;
-    fallback.push({
-      acc,
-      primaryDocument: primaryDocuments[i],
-      filingDate: filingDates[i],
-      reportDate: reportDates[i],
-      primaryDescription: primaryDescriptions[i] || ""
-    });
-  }
-
-  const found = await Promise.all(fallback.map(async item => {
-    const url =
-      "https://www.sec.gov/Archives/edgar/data/" +
-      String(Number(cik)) + "/" + item.acc.replace(/-/g, "") + "/" + item.acc + ".txt";
-    try {
-      const plain = cleanText(await fetchText(url, secHeaders));
-      const financial =
-        /condensed consolidated (?:balance sheets|statements of operations)/i.test(plain) ||
-        (/financial statements/i.test(plain) && /revenues?/i.test(plain) && /total liabilities/i.test(plain));
-      if (!financial) return null;
-      const period = extractLatestFinancialPeriod(plain);
-      return {
-        form: "6-K",
-        accession: item.acc,
-        primaryDocument: item.primaryDocument,
-        filingDate: item.filingDate,
-        reportDate: period || item.reportDate || item.filingDate,
-        primaryDescription: item.primaryDescription,
-        financialPeriod: period || item.reportDate || item.filingDate
-      };
-    } catch (_) { return null; }
-  }));
-
-  for (const item of found) if (item) candidates.push(item);
-  candidates.sort((a,b) =>
-    String(b.financialPeriod || b.reportDate || b.filingDate || "")
-      .localeCompare(String(a.financialPeriod || a.reportDate || a.filingDate || ""))
+  candidates.sort((a, b) =>
+    String(b.reportDate || b.filingDate || "").localeCompare(
+      String(a.reportDate || a.filingDate || "")
+    )
   );
+
   return candidates[0] || null;
-}
-function extractLatestFinancialPeriod(text) {
-  const dates = [];
-  const re = /(?:as of|ended|ending|year ended|six months ended|three months ended|nine months ended)\s+(?:the\s+)?([A-Z][a-z]+\s+\d{1,2},\s+20\d{2})/gi;
-  let m;
-  while ((m = re.exec(text))) {
-    const d = Date.parse(m[1]);
-    if (!Number.isNaN(d)) dates.push(new Date(d).toISOString().slice(0,10));
-  }
-  dates.sort();
-  return dates.length ? dates[dates.length - 1] : null;
-}
-
-async function findCurrentSharesOutstanding(text, usgaap, dei, filing, recent, cik, secHeaders) {
-  const direct = findSharesOutstanding(text, usgaap, dei, filing);
-  let best = direct || null;
-  const forms = recent?.form || [];
-  const accessions = recent?.accessionNumber || [];
-
-  for (let i = 0; i < Math.min(forms.length, 40); i++) {
-    if (forms[i] !== "6-K") continue;
-    const acc = String(accessions[i] || "");
-    if (!acc) continue;
-
-    const url =
-      "https://www.sec.gov/Archives/edgar/data/" +
-      String(Number(cik)) + "/" +
-      acc.replace(/-/g, "") + "/" + acc + ".txt";
-
-    let plain;
-    try { plain = cleanText(await fetchText(url, secHeaders)); }
-    catch (_) { continue; }
-
-    const post = extractShareAmount(
-      plain,
-      /Class A[^.\n]{0,180}?approximately\s+([0-9.]+)\s+million[^.\n]{0,120}?Class B[^.\n]{0,100}?approximately\s+([0-9.]+)\s+(million|thousand|shares?|ordinary shares?)/i
-    );
-
-    if (post) {
-      const total = post.a + post.b;
-      if (total > 1000) { best = total; break; }
-    }
-
-    const exact = extractExactClassShares(plain);
-    if (exact && exact > 1000 && /reverse stock split|reverse split|share consolidation|post[- ]reverse[- ]split/i.test(plain)) {
-      best = exact;
-      break;
-    }
-  }
-
-  return best;
-}
-
-function extractShareAmount(text, regex) {
-  const m = String(text || "").match(regex);
-  if (!m) return null;
-  const a = Number(m[1]) * 1000000;
-  const bRaw = Number(m[2]);
-  const unit = String(m[3] || "").toLowerCase();
-  const multiplier = unit.includes("million") ? 1000000 : unit.includes("thousand") ? 1000 : 1;
-  const b = bRaw * multiplier;
-  return Number.isFinite(a) && Number.isFinite(b) ? {a,b} : null;
-}
-
-function extractExactClassShares(text) {
-  const a = String(text || "").match(/Class A[^.\n]{0,180}?([0-9][0-9,]+)\s+(?:ordinary )?shares?[^.\n]{0,80}?issued and outstanding/i);
-  const b = String(text || "").match(/Class B[^.\n]{0,180}?([0-9][0-9,]+)\s+(?:ordinary )?shares?[^.\n]{0,80}?issued and outstanding/i);
-  if (!a || !b) return null;
-  const av = parseNumber(a[1]), bv = parseNumber(b[1]);
-  return av > 1000 && bv >= 0 ? av + bv : null;
-}
-
-function findSharesOutstanding(text, usgaap, dei, filing) {
-  const fact = latestFactFromFacts(
-    ["EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"],
-    dei, usgaap, filing
-  );
-  if (fact?.value > 1000) return fact.value;
-
-  const patterns = [
-    /([0-9][0-9,]+)\s+(?:common\s+)?shares?\s+(?:issued\s+and\s+)?outstanding\s+as\s+of\s+[A-Z][a-z]+\s+\d{1,2},\s+20\d{2}/i,
-    /([0-9][0-9,]+)\s+shares?[^\n]{0,100}?outstanding\s+as\s+of\s+[A-Z][a-z]+\s+\d{1,2},\s+20\d{2}/i,
-    /as of [A-Z][a-z]+\s+\d{1,2},\s+20\d{2}[^\n]{0,220}?there were\s+([0-9][0-9,]+)\s+shares?[^\n]{0,80}?outstanding/i,
-    /as of [A-Z][a-z]+\s+\d{1,2},\s+20\d{2}[^\n]{0,220}?([0-9][0-9,]+)\s+shares?[^\n]{0,80}?outstanding/i,
-    /there were\s+([0-9][0-9,]+)\s+(?:shares?|shares? of (?:the )?(?:registrant's|registrant) common stock)[^\n]{0,80}?outstanding/i,
-    /([0-9][0-9,]+)\s+Class\s+A[^\n]{0,100}?and\s+([0-9][0-9,]+)\s+Class\s+B[^\n]{0,100}?issued and outstanding/i,
-    /as of [A-Z][a-z]+\s+\d{1,2},\s+20\d{2}[^\n]{0,120}?([0-9][0-9,]+)\s+Class\s+A[^\n]{0,100}?([0-9][0-9,]+)\s+Class\s+B/i
-  ];
-
-  for (const re of patterns) {
-    const m = text.match(re);
-    if (!m) continue;
-    if (m.length === 2) {
-      const n = parseNumber(m[1]);
-      if (n > 1000) return n;
-    } else {
-      const a = parseNumber(m[1]), b = parseNumber(m[2]);
-      if (a > 1000 && b >= 0) return a + b;
-    }
-  }
-  return null;
-}
-
-function findInterestBearingDebt(text, usgaap, filing) {
-  const lines = String(text || "").split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const debtPatterns = [
-    /^(?:current portion of\s+)?convertible notes? payable\b/i,
-    /^(?:current portion of\s+)?convertible debt\b/i,
-    /^(?:current portion of\s+)?notes payable\b/i,
-    /^(?:current portion of\s+)?bank borrowings?\b/i,
-    /^(?:current portion of\s+)?term loans?\b/i,
-    /^(?:current portion of\s+)?loans payable\b/i,
-    /^(?:current portion of\s+)?long[- ]term borrowings?\b/i,
-    /^(?:current portion of\s+)?short[- ]term borrowings?\b/i,
-    /^senior notes?\b/i,
-    /^interest[- ]bearing debt\b/i
-  ];
-
-  const rows = [];
-  for (let i = 0; i < lines.length; i++) {
-    const pattern = debtPatterns.find(re => re.test(lines[i]));
-    if (!pattern) continue;
-    const value = firstFinancialValueAfterLabel(lines[i], pattern);
-    if (value == null) continue;
-    rows.push({ value: Math.abs(value) * inferLineScale(lines, i), label: lines[i] });
-  }
-
-  if (rows.length) {
-    const unique = [];
-    const seen = new Set();
-    for (const row of rows) {
-      const key = row.label + "|" + row.value;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      unique.push(row);
-    }
-    return {
-      value: unique.reduce((sum, row) => sum + row.value, 0),
-      source: unique.map(row => row.label).slice(0, 6).join(" | ")
-    };
-  }
-
-  if (/\btotal assets\b/i.test(text) && /\btotal liabilities\b/i.test(text)) {
-    return { value: 0, source: "SEC balance sheet — no interest-bearing debt line disclosed" };
-  }
-
-  return null;
-}
-
-function extractLabeledAmount(text, regex) {
-  const m = String(text || "").match(regex);
-  if (!m) return null;
-  const n = parseNumber(m[1]);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-function findInterestTakingDeposits(text, usgaap, filing) {
-  const lines = String(text || "").split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const regex = /interest[- ]bearing deposits?|interest[- ]taking deposits?|deposits? (?:that|which) (?:earn|take) interest/i;
-
-  for (let i = 0; i < lines.length; i++) {
-    if (!regex.test(lines[i])) continue;
-    const value = firstFinancialValueAfterLabel(lines[i], regex);
-    if (value != null) {
-      return {
-        value: Math.abs(value) * inferLineScale(lines, i),
-        source: lines[i]
-      };
-    }
-  }
-
-  const fact = latestFactFromFacts([
-    "InterestBearingDeposits",
-    "InterestBearingDepositsInBanks",
-    "InterestBearingDepositsAtOtherBanks"
-  ], usgaap, {}, filing);
-
-  if (fact?.value != null) {
-    return { value: Math.abs(fact.value), source: "SEC XBRL" };
-  }
-
-  if (/\btotal assets\b/i.test(text) && /\btotal liabilities\b/i.test(text)) {
-    return { value: 0, source: "SEC balance sheet — no interest-bearing deposits disclosed" };
-  }
-
-  return null;
-}
-
-function getPrimaryOperationsStatementSection(text) {
-  const raw = String(text || "");
-  const marker = /(?:condensed (?:consolidated )?)?statements of operations(?: and comprehensive (?:loss|income))?/gi;
-  let m;
-  let best = null;
-  let bestScore = -1;
-
-  while ((m = marker.exec(raw))) {
-    const tail = raw.slice(m.index, m.index + 160000);
-    const afterTitle = tail.slice(m[0].length);
-    const stop = afterTitle.search(/(?:condensed )?(?:statements of cash flows|statements of comprehensive (?:loss|income)|notes to (?:condensed )?financial statements)/i);
-    const section = stop > 0 ? afterTitle.slice(0, stop) : afterTitle;
-
-    const score =
-      (/(?:three months ended|three and six months ended|quarter ended|months ended)/i.test(section) ? 3 : 0) +
-      (/(?:^|\n)\s*Sales\b/im.test(section) ? 4 : 0) +
-      (/(?:^|\n)\s*Interest income\b/im.test(section) ? 4 : 0) +
-      (/(?:^|\n)\s*Total operating expenses\b/im.test(section) ? 2 : 0) +
-      (/(?:^|\n)\s*Loss from operations\b/im.test(section) ? 2 : 0) +
-      (/(?:^|\n)\s*Total other income \(expense\), net\b/im.test(section) ? 2 : 0) +
-      (/(?:^|\n)\s*Net loss\b/im.test(section) ? 2 : 0);
-
-    if (score > bestScore) {
-      bestScore = score;
-      best = section;
-    }
-  }
-
-  return bestScore >= 8 ? best : null;
-}
-
-function extractStatementRowValues(text, labelRegex) {
-  const section = getPrimaryOperationsStatementSection(text);
-  if (!section) return [];
-
-  const lines = section.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const out = [];
-
-  for (const line of lines) {
-    if (!labelRegex.test(line)) continue;
-
-    const after = line.replace(labelRegex, " ");
-    const matches = after.match(/(?:\$?\(?[0-9][0-9,]*(?:\.\d+)?\)?|—|–)/g) || [];
-
-    for (const token of matches) {
-      if (token === "—" || token === "–") {
-        out.push(0);
-        break;
-      }
-      const n = parseNumber(token);
-      if (Number.isFinite(n)) {
-        out.push(Math.abs(n));
-        break;
-      }
-    }
-  }
-  return out;
-}
-
-function getOperationsSection(text) {
-  const raw = String(text || "");
-  const marker = /(?:condensed consolidated )?(?:statements of operations|statements of income|statements of earnings)/gi;
-  const matches = [];
-  let m;
-  while ((m = marker.exec(raw))) matches.push(m.index);
-
-  // SEC filings often mention the statement in the Table of Contents first.
-  // Choose the occurrence that actually contains statement rows, not the TOC.
-  for (let i = matches.length - 1; i >= 0; i--) {
-    const start = matches[i];
-    const tail = raw.slice(start);
-    const stop = tail.search(/see accompanying notes to condensed consolidated financial statements|statements of comprehensive (?:loss|income)|item 2\./i);
-    const section = stop > 0 ? tail.slice(0, stop) : tail.slice(0, 120000);
-
-    if (/interest income|dividend income|revenue|net loss|operating expenses/i.test(section)) {
-      return section;
-    }
-  }
-
-  return null;
-}
-
-function extractStatementAmount(text, labelPattern) {
-  const raw = String(text || "");
-  const re = new RegExp(labelPattern + "[^\\n]{0,180}?(?:—|–|-|\\$?\\s*\\(?([0-9][0-9,]*(?:\\.\\d+)?)\\)?)", "i");
-  const m = raw.match(re);
-  if (!m) return null;
-  const n = parseNumber(m[1]);
-  return Number.isFinite(n) ? Math.abs(n) : null;
-}
-
-
-function extractSecCurrentQuarterIncomeComponents(text) {
-  const lines = String(text || "")
-    .split(/\r?\n/)
-    .map(normalizeLine)
-    .filter(Boolean);
-
-  const getRow = (label) => {
-    const wanted = String(label).toLowerCase();
-    const candidates = [];
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const lower = line.toLowerCase();
-
-      if (!(lower === wanted || lower.startsWith(wanted + " "))) continue;
-
-      let value = firstFinancialValueAfterLabel(line, new RegExp("^" + label + "\\b", "i"));
-
-      if (value == null) {
-        for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
-          if (/^(sales|cost of sales|research and development|sales and marketing|general and administrative|depreciation and amortization|total operating expenses|loss from operations|interest income|dividend income|change in fair value|interest expense|other expense|total other income|net loss)\\b/i.test(lines[j])) break;
-          const nums = numbersFromLine(lines[j]);
-          if (nums.length) {
-            value = Math.abs(nums[0]);
-            break;
-          }
-        }
-      }
-
-      if (value == null) continue;
-
-      const before = lines.slice(Math.max(0, i - 20), i).join(" ").toLowerCase();
-      const after = lines.slice(i, Math.min(lines.length, i + 25)).join(" ").toLowerCase();
-
-      let score = 0;
-      if (before.includes("three months ended") || before.includes("quarter ended")) score += 5;
-      if (after.includes("total operating expenses")) score += 2;
-      if (after.includes("loss from operations")) score += 2;
-      if (after.includes("other income (expense)")) score += 2;
-      if (after.includes("net loss")) score += 1;
-
-      candidates.push({ value, index: i, score });
-    }
-
-    candidates.sort((a, b) => b.score - a.score || a.index - b.index);
-    return candidates[0] || null;
-  };
-
-  const sales = getRow("Sales");
-  const interest = getRow("Interest income");
-  if (!sales || !interest) return null;
-
-  const components = [
-    { key: "sales", value: sales.value },
-    { key: "interest", value: interest.value }
-  ];
-
-  for (const item of [
-    ["Dividend income", "dividend"],
-    ["Change in fair value of conversion option liability", "conversion"],
-    ["Change in fair value of warrants liabilities", "warrants"]
-  ]) {
-    const found = getRow(item[0]);
-    if (found && found.value > 0) {
-      components.push({ key: item[1], value: found.value });
-    }
-  }
-
-  return {
-    total: components.reduce((sum, item) => sum + item.value, 0),
-    interest: interest.value,
-    components
-  };
-}
-function findProhibitedIncome(text, usgaap, filing) {
-  const lines = String(text || "").split(/\r?\n/).map(normalizeLine).filter(Boolean);
-
-  for (const line of lines) {
-    if (!/^Interest income(?:,?\s+net)?\b/i.test(line)) continue;
-    const value = firstFinancialValueAfterLabel(line, /^Interest income(?:,?\s+net)?\b/i);
-    if (value != null) {
-      return {
-        value: Math.abs(value),
-        label: "Interest income",
-        source: "SEC Statement of Operations — current quarter"
-      };
-    }
-  }
-
-  if (
-    /(?:^|\n)\s*(?:Sales|Revenue|Revenues|Net sales)\b/im.test(String(text || "")) &&
-    /(?:^|\n)\s*Net loss\b/im.test(String(text || ""))
-  ) {
-    return {
-      value: 0,
-      label: "No interest income disclosed",
-      source: "SEC Statement of Operations — no interest income line disclosed"
-    };
-  }
-
-  return null;
-}
-
-function extractFlattenedIncomeComponents(text) {
-  const raw = String(text || "");
-  const labels = [
-    { key: "sales", re: /(?:^|\s)(?:sales|revenue|revenues|net sales)\b/i },
-    { key: "interest", re: /(?:^|\s)interest income(?:,?\s+net)?\b/i },
-    { key: "dividend", re: /(?:^|\s)dividend income\b/i },
-    { key: "conversion", re: /(?:^|\s)change in fair value of conversion option liability\b/i },
-    { key: "warrants", re: /(?:^|\s)change in fair value of warrants? liabilities?\b/i },
-    { key: "fairValue", re: /(?:^|\s)change in fair value of [^\n]{0,100} liability\b/i },
-    { key: "gain", re: /(?:^|\s)gain (?:on|from)\b/i }
-  ];
-
-  const result = {};
-  for (const item of labels) {
-    const m = raw.match(item.re);
-    if (!m) continue;
-
-    const tail = raw.slice(m.index + m[0].length, m.index + m[0].length + 700);
-    const nums = tail.match(/(?:\$\s*)?\(?[0-9][0-9,]*(?:\.\d+)?\)?/g) || [];
-
-    for (const token of nums) {
-      const n = parseNumber(token);
-      if (Number.isFinite(n) && n >= 0) {
-        result[item.key] = Math.abs(n);
-        break;
-      }
-    }
-  }
-  return Object.values(result).filter(v => v > 0);
-}
-
-function extractCurrentQuarterGrossPositiveIncome(text) {
-  const raw = String(text || "");
-
-  // Work from the actual operations statement when possible. If the SEC
-  // markup is flattened differently, fall back to a bounded text window
-  // around the first real statement.
-  let source = getPrimaryOperationsStatementSection(raw);
-
-  if (!source) {
-    const m = raw.match(/Statements of Operations(?: and Comprehensive (?:Loss|Income))?/i);
-    if (m) {
-      const tail = raw.slice(m.index);
-      const stop = tail.search(/Net loss attributable to common stockholders|Net income attributable to common stockholders/i);
-      source = stop > 0 ? tail.slice(0, stop) : tail.slice(0, 60000);
-    }
-  }
-
-  if (!source) return null;
-
-  const lines = source.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const values = [];
-  const labels = [
-    /^Sales(?!\s+and\s+marketing)\b/i,
-    /^(?:Revenue(?:s)?|Net Sales)\b/i,
-    /^Interest Income(?:,?\s+Net)?\b/i,
-    /^Dividend Income\b/i,
-    /^Change in Fair Value of Conversion Option Liability\b/i,
-    /^Change in Fair Value of Warrants? Liabilities?\b/i,
-    /^Change in Fair Value of .* Liability\b/i,
-    /^Gain (?:on|from)\b/i
-  ];
-
-  for (const line of lines) {
-    for (const label of labels) {
-      if (!label.test(line)) continue;
-
-      const after = line.replace(label, " ");
-      const nums = after.match(/\(?[0-9][0-9,]*(?:\.\d+)?\)?/g) || [];
-      if (!nums.length) break;
-
-      const value = Math.abs(parseNumber(nums[0]));
-      if (Number.isFinite(value) && value > 0 && !values.includes(value)) {
-        values.push(value);
-      }
-      break;
-    }
-  }
-
-  // FEMY and similar SEC tables should contain sales + positive other-income
-  // rows. Do not fall back to interest income alone when these rows exist.
-  const total = values.reduce((sum, v) => sum + v, 0);
-  return total > 0 ? total : null;
-}
-function extractCurrentQuarterPositiveIncome(text) {
-  const raw = String(text || "");
-  const startMatch = raw.match(/Condensed (?:Consolidated )?Statements of Operations(?: and Comprehensive (?:Loss|Income))?/i);
-  if (!startMatch) return null;
-
-  const tail = raw.slice(startMatch.index);
-  const endMatch = tail.match(/(?:Net loss attributable to common stockholders|Net income attributable to common stockholders)/i);
-  const statement = endMatch ? tail.slice(0, endMatch.index) : tail.slice(0, 50000);
-  const lines = statement.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-
-  const labels = [
-    /^Sales\b/i,
-    /^Revenue(?:s)?\b/i,
-    /^Net sales\b/i,
-    /^Interest income(?:,?\s+net)?\b/i,
-    /^Dividend income\b/i,
-    /^Change in fair value of conversion option liability\b/i,
-    /^Change in fair value of warrants? liabilities?\b/i,
-    /^Change in fair value of .* liability\b/i,
-    /^Gain on\b/i,
-    /^Gain from\b/i
-  ];
-
-  const values = [];
-  for (const line of lines) {
-    for (const label of labels) {
-      if (!label.test(line)) continue;
-      const v = firstFinancialValueAfterLabel(line, label);
-      if (v != null && v > 0 && !values.includes(v)) values.push(v);
-      break;
-    }
-  }
-
-  const total = values.reduce((sum, v) => sum + v, 0);
-  return total > 0 ? total : null;
-}
-
-function findTotalIncome(text, usgaap, filing) {
-  const lines = String(text || "").split(/\r?\n/).map(normalizeLine).filter(Boolean);
-
-  for (const line of lines) {
-    if (!/^(?:Sales|Net sales|Revenue|Revenues)\b/i.test(line)) continue;
-    const value = firstFinancialValueAfterLabel(
-      line,
-      /^(?:Sales|Net sales|Revenue|Revenues)\b/i
-    );
-    if (value != null && value > 0) {
-      return {
-        value: Math.abs(value),
-        source: "SEC Statement of Operations — current-quarter sales/revenue"
-      };
-    }
-  }
-
-  return null;
-}
-
-function findLabeledFinancialValue(text, labelRegex) {
-  const raw = String(text || "");
-  // Preserve all regex flags (especially m) so row labels anchored with ^
-  // can be found after the SEC HTML has been flattened into one section.
-  const flags = labelRegex.flags.includes("i") ? labelRegex.flags : labelRegex.flags + "i";
-  const re = new RegExp(labelRegex.source + "[\\s\\S]{0,260}", flags);
-  const m = raw.match(re);
-  if (!m) return null;
-
-  const labelMatch = m[0].match(labelRegex);
-  if (!labelMatch) return null;
-
-  const tail = m[0].slice(labelMatch.index + labelMatch[0].length);
-  const tokens = tail.match(/(?:—|–|\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?)/g) || [];
-
-  for (const token of tokens) {
-    const t = String(token).trim();
-    if (t === "—" || t === "–") return 0;
-    const n = parseNumber(t);
-    if (Number.isFinite(n)) return Math.abs(n);
-  }
-  return null;
-}
-
-function firstFinancialValueAfterLabel(line, labelRegex) {
-  const rest = String(line || "").replace(labelRegex, " ");
-  // Preserve em-dash as zero. Ignore dates/years that can appear later.
-  const tokenRe = /(?:—|–|\$?\s*\(?[0-9][0-9,]*(?:\.\d+)?\)?)/g;
-  const tokens = rest.match(tokenRe) || [];
-  for (const raw of tokens) {
-    const t = String(raw).trim();
-    if (t === "—" || t === "–" || t === "-") return 0;
-    const n = parseNumber(t);
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
-}
-
-function inferLineScale(lines, index) {
-  const start = Math.max(0, index - 40);
-  for (let i = index; i >= start; i--) {
-    if (/\bin thousands\b|\bin thousands,|\(in thousands\b/i.test(lines[i])) return 1000;
-    if (/\bin millions\b|\(in millions\b/i.test(lines[i])) return 1000000;
-  }
-  return 1;
-}
-
-function latestFactFromFacts(names, primaryFacts, secondaryFacts, filing) {
-  const all = { ...(secondaryFacts || {}), ...(primaryFacts || {}) };
-
-  for (const name of names) {
-    const fact = all[name];
-    if (!fact?.units) continue;
-
-    for (const unit of Object.values(fact.units)) {
-      if (!Array.isArray(unit)) continue;
-
-      const candidates = unit
-        .filter(x =>
-          (!filing.accession || String(x.accn || "") === String(filing.accession)) &&
-          Number.isFinite(Number(x.val))
-        )
-        .sort((a, b) => String(b.filed || "").localeCompare(String(a.filed || "")));
-
-      if (candidates.length) {
-        return {
-          value: Number(candidates[0].val),
-          tag: name
-        };
-      }
-    }
-  }
-
-  return null;
-}
-
-async function getCurrentMarketData(symbol) {
-  const headers = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json,text/plain,*/*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Origin": "https://www.nasdaq.com",
-    "Referer": "https://www.nasdaq.com/market-activity/stocks/screener"
-  };
-
-  // NTCL and CRIS are Nasdaq-listed, so avoid downloading three full
-  // exchange screeners on every request.
-  try {
-    const url =
-      "https://api.nasdaq.com/api/screener/stocks" +
-      "?tableonly=true&limit=5000&offset=0&exchange=NASDAQ&download=true";
-
-    const response = await fetch(url, { headers });
-    if (response.ok) {
-      const json = await response.json();
-      const rows = Array.isArray(json?.data?.rows) ? json.data.rows : [];
-      const q = rows.find(x => String(x.symbol || "").trim().toUpperCase() === symbol);
-      if (q) {
-        const price = parseMarketNumber(q.lastsale);
-        const marketCap = parseMarketNumber(q.marketCap);
-        const shares = parseMarketNumber(q.sharesOutstanding ?? q.sharesoutstanding);
-        return {
-          price: Number.isFinite(price) && price > 0 ? price : null,
-          marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
-          shares: Number.isFinite(shares) && shares > 0 ? shares : null,
-          source: "Nasdaq Screener"
-        };
-      }
-    }
-  } catch (_) {}
-
-  try {
-    const url =
-      "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
-      encodeURIComponent(symbol);
-
-    const response = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }
-    });
-    if (!response.ok) return null;
-
-    const json = await response.json();
-    const q = json?.quoteResponse?.result?.[0];
-    if (!q) return null;
-
-    const price = Number(q.regularMarketPrice ?? q.postMarketPrice);
-    const marketCap = Number(q.marketCap);
-    const shares = Number(q.sharesOutstanding);
-
-    const safePrice = Number.isFinite(price) && price > 0 ? price : null;
-    const safeShares = Number.isFinite(shares) && shares > 0 ? shares : null;
-    const safeMarketCap =
-      Number.isFinite(marketCap) && marketCap > 0
-        ? marketCap
-        : (safePrice && safeShares ? safePrice * safeShares : null);
-
-    return {
-      price: safePrice,
-      marketCap: safeMarketCap,
-      shares: safeShares,
-      source: "Yahoo Finance"
-    };
-  } catch (_) {
-    return null;
-  }
-}
-
-async function getCurrentPrice(symbol) {
-  const url =
-    "https://query1.finance.yahoo.com/v8/finance/chart/" +
-    encodeURIComponent(symbol) +
-    "?range=1d&interval=1m";
-
-  const response = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }
-  });
-
-  if (!response.ok) throw new Error("تعذر جلب السعر الحالي");
-  const json = await response.json();
-  return Number(json?.chart?.result?.[0]?.meta?.regularMarketPrice) || null;
-}
-
-async function fetchJson(url, headers) {
-  const response = await fetch(url, { headers });
-  if (!response.ok) throw new Error("تعذر جلب بيانات SEC");
-  return response.json();
-}
-
-async function fetchText(url, headers) {
-  const response = await fetch(url, { headers });
-  if (!response.ok) throw new Error("تعذر جلب ملف الإفصاح المالي من SEC");
-  return response.text();
-}
-
-function cleanText(html) {
-  return decodeHtml(
-    String(html || "")
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      // Preserve SEC table cell and row boundaries. This is important because
-      // the first numeric cell is the current-quarter value.
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/td>/gi, " | ")
-      .replace(/<\/th>/gi, " | ")
-      .replace(/<\/tr>/gi, "\n")
-      .replace(/<\/p>/gi, "\n")
-      .replace(/<\/div>/gi, "\n")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/[\u00a0\t]+/g, " ")
-      .replace(/[ ]{2,}/g, " ")
-  );
-}
-
-function normalizeLine(s) {
-  return String(s || "")
-    .replace(/\s+/g, " ")
-    .replace(/[|]+/g, " ")
-    .trim();
-}
-
-function numbersFromLine(line) {
-  const matches = String(line || "").match(/\(?-?\$?\s*[0-9][0-9,]*(?:\.\d+)?\)?/g) || [];
-  return matches
-    .map(parseNumber)
-    .filter(Number.isFinite)
-    .filter(n => Math.abs(n) > 0);
-}
-
-function parseNumber(raw) {
-  let s = String(raw || "").replace(/[$,%\s]/g, "");
-  let negative = /^\(.*\)$/.test(s);
-  s = s.replace(/[()]/g, "").replace(/,/g, "");
-  const n = Number(s);
-  return negative ? -n : n;
-}
-
-function parseMarketNumber(raw) {
-  if (raw == null) return null;
-  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
-
-  let s = String(raw).trim().replace(/[$,\s]/g, "");
-  if (!s || s === "-" || s === "—" || s.toLowerCase() === "n/a") return null;
-
-  let multiplier = 1;
-  const suffix = s.slice(-1).toUpperCase();
-  if (suffix === "K") multiplier = 1e3;
-  else if (suffix === "M") multiplier = 1e6;
-  else if (suffix === "B") multiplier = 1e9;
-  else if (suffix === "T") multiplier = 1e12;
-
-  if (multiplier !== 1) s = s.slice(0, -1);
-  const n = Number(s.replace(/\((.*)\)/, "-$1"));
-  return Number.isFinite(n) ? n * multiplier : null;
-}
-
-function decodeHtml(s) {
-  return String(s || "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">");
 }
 
 function publicFiling(filing) {
@@ -1122,3 +244,218 @@ function publicFiling(filing) {
   };
 }
 
+function extractRows(html) {
+  const source = String(html || "");
+  const rows = [];
+  const re = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+  let m;
+
+  while ((m = re.exec(source))) {
+    const cells = [];
+    const cellRe = /<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi;
+    let c;
+
+    while ((c = cellRe.exec(m[1]))) {
+      const value = decodeHtml(
+        c[1]
+          .replace(/<br\s*\/?>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+      )
+        .replace(/\u00a0/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (value) cells.push(value);
+    }
+
+    if (cells.length >= 2) {
+      rows.push({
+        label: cells[0],
+        cells,
+        values: cells.slice(1).map(parseMoney).filter(v => v !== null)
+      });
+    }
+  }
+
+  return rows;
+}
+
+function findRowValue(rows, labelRegex) {
+  for (const row of rows) {
+    if (labelRegex.test(row.label) && row.values.length) {
+      return row.values[0];
+    }
+  }
+  return null;
+}
+
+function findDebt(rows, text) {
+  const labels = [
+    /^(?:current portion of\s+)?convertible notes? payable(?:,?\s+net)?$/i,
+    /^(?:current portion of\s+)?convertible debt$/i,
+    /^(?:current portion of\s+)?notes payable(?:,?\s+net)?$/i,
+    /^(?:current portion of\s+)?bank borrowings?$/i,
+    /^(?:current portion of\s+)?term loans?$/i,
+    /^(?:current portion of\s+)?loans payable$/i,
+    /^(?:current portion of\s+)?long[- ]term borrowings?$/i,
+    /^(?:current portion of\s+)?short[- ]term borrowings?$/i,
+    /^senior notes?(?:,?\s+net)?$/i,
+    /^interest[- ]bearing debt$/i
+  ];
+
+  const found = [];
+  for (const row of rows) {
+    if (!labels.some(re => re.test(row.label))) continue;
+    if (!row.values.length) continue;
+    found.push({ value: Math.abs(row.values[0]), label: row.label });
+  }
+
+  if (found.length) {
+    const seen = new Set();
+    const unique = found.filter(x => {
+      const key = x.label + "|" + x.value;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    return {
+      value: unique.reduce((s, x) => s + x.value, 0),
+      source: unique.map(x => x.label).slice(0, 6).join(" | ")
+    };
+  }
+
+  if (/\btotal assets\b/i.test(text) && /\btotal liabilities\b/i.test(text)) {
+    return {
+      value: 0,
+      source: "SEC balance sheet — no interest-bearing debt disclosed"
+    };
+  }
+
+  return null;
+}
+
+function findDeposits(rows, text) {
+  const re = /interest[- ]bearing deposits?|interest[- ]taking deposits?/i;
+
+  for (const row of rows) {
+    if (!re.test(row.label) || !row.values.length) continue;
+    return {
+      value: Math.abs(row.values[0]),
+      source: row.label
+    };
+  }
+
+  if (/\btotal assets\b/i.test(text) && /\btotal liabilities\b/i.test(text)) {
+    return {
+      value: 0,
+      source: "SEC balance sheet — no interest-bearing deposits disclosed"
+    };
+  }
+
+  return null;
+}
+
+function hasOperationsData(rows, text) {
+  const hasSales = rows.some(r => /^(?:sales|net sales|revenue|revenues)$/i.test(r.label));
+  const hasLoss = rows.some(r => /^net loss(?: attributable.*)?$/i.test(r.label));
+  return hasSales && hasLoss || (
+    /\b(?:sales|revenue|revenues)\b/i.test(text) &&
+    /\bnet loss\b/i.test(text)
+  );
+}
+
+function extractShares(text) {
+  const patterns = [
+    /([0-9][0-9,]+)\s+(?:common\s+)?shares?\s+(?:issued\s+and\s+)?outstanding\s+as\s+of\s+[A-Z][a-z]+\s+\d{1,2},\s+20\d{2}/i,
+    /([0-9][0-9,]+)\s+shares?[^\n]{0,120}?outstanding\s+as\s+of\s+[A-Z][a-z]+\s+\d{1,2},\s+20\d{2}/i
+  ];
+
+  for (const re of patterns) {
+    const m = String(text || "").match(re);
+    if (!m) continue;
+    const n = parseMoney(m[1]);
+    if (n > 1000) return n;
+  }
+
+  return null;
+}
+
+async function getMarket(symbol) {
+  try {
+    const url =
+      "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
+      encodeURIComponent(symbol);
+
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json"
+      }
+    });
+
+    if (!res.ok) return null;
+
+    const q = (await res.json())?.quoteResponse?.result?.[0];
+    if (!q) return null;
+
+    const price = Number(q.regularMarketPrice ?? q.postMarketPrice);
+    const marketCap = Number(q.marketCap);
+    const shares = Number(q.sharesOutstanding);
+
+    return {
+      price: Number.isFinite(price) && price > 0 ? price : null,
+      marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
+      shares: Number.isFinite(shares) && shares > 0 ? shares : null,
+      source: "Yahoo Finance"
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function getJson(url, headers) {
+  const res = await fetch(url, { headers });
+  if (!res.ok) throw new Error("تعذر جلب بيانات SEC");
+  return res.json();
+}
+
+async function getText(url, headers) {
+  const res = await fetch(url, { headers });
+  if (!res.ok) throw new Error("تعذر جلب ملف الإفصاح المالي من SEC");
+  return res.text();
+}
+
+function htmlToText(html) {
+  return decodeHtml(
+    String(html || "")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+  );
+}
+
+function parseMoney(value) {
+  let s = String(value ?? "").trim();
+  if (!s || s === "-" || s === "—" || s === "–") return null;
+
+  const negative = /^\(.*\)$/.test(s);
+  s = s.replace(/[$,%(),\s]/g, "").replace(/,/g, "");
+
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return negative ? -n : n;
+}
+
+function decodeHtml(value) {
+  return String(value || "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
