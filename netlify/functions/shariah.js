@@ -642,6 +642,34 @@ function findProhibitedIncome(text, usgaap, filing) {
 
   return null;
 }
+function extractCurrentQuarterGrossPositiveIncome(text) {
+  const ops = getOperationsSection(text);
+  if (!ops) return null;
+
+  // Read the first/current-quarter value from each income row in the
+  // Statement of Operations. This is intentionally limited to the statement
+  // section so prior-period MD&A tables cannot become the denominator.
+  const labels = [
+    /^(?:sales|revenue(?:s)?|net sales)\b/im,
+    /^interest income(?:,?\s+net)?\b/im,
+    /^dividend income\b/im,
+    /^change in fair value of conversion option liability\b/im,
+    /^change in fair value of warrants? liabilities?\b/im,
+    /^change in fair value of .* liability\b/im,
+    /^gain on\b/im,
+    /^gain from\b/im
+  ];
+
+  const values = [];
+  for (const label of labels) {
+    const v = findLabeledFinancialValue(ops, label);
+    if (v != null && v > 0 && !values.includes(v)) values.push(v);
+  }
+
+  const total = values.reduce((sum, v) => sum + v, 0);
+  return total > 0 ? total : null;
+}
+
 function extractCurrentQuarterPositiveIncome(text) {
   const raw = String(text || "");
   const startMatch = raw.match(/Condensed (?:Consolidated )?Statements of Operations(?: and Comprehensive (?:Loss|Income))?/i);
@@ -682,9 +710,18 @@ function extractCurrentQuarterPositiveIncome(text) {
 function findTotalIncome(text, usgaap, filing) {
   const raw = String(text || "");
 
-  // Read the actual current-quarter statement rows before any broader
-  // flattened-table fallback. This prevents prior-period columns and labels
-  // such as "Cost of sales" from corrupting the denominator.
+  // First try the actual Statement of Operations section using row labels.
+  // This catches issuers such as FEMY whose SEC table is flattened in a way
+  // that can defeat the line-based parser below.
+  const statementSectionGross = extractCurrentQuarterGrossPositiveIncome(raw);
+  if (statementSectionGross != null) {
+    return {
+      value: statementSectionGross,
+      source: "SEC Statement of Operations — current-quarter gross positive income"
+    };
+  }
+
+  // Then use the existing line-based parser.
   const statementGross = extractCurrentQuarterPositiveIncome(raw);
   if (statementGross != null) {
     return {
