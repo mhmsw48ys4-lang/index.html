@@ -57,11 +57,16 @@ exports.handler = async (event) => {
     );
   }
 
+  function nasdaqDate(dateString) {
+    const [yyyy, mm, dd] = dateString.split("-");
+    return mm + "/" + dd + "/" + yyyy;
+  }
+
   async function fetchRange(rangeFrom, rangeTo) {
     const url =
       "https://api.nasdaq.com/api/calendar/splits" +
-      "?fromdate=" + encodeURIComponent(rangeFrom) +
-      "&todate=" + encodeURIComponent(rangeTo) +
+      "?fromdate=" + encodeURIComponent(nasdaqDate(rangeFrom)) +
+      "&todate=" + encodeURIComponent(nasdaqDate(rangeTo)) +
       "&limit=5000";
 
     const response = await fetch(url, {
