@@ -580,11 +580,13 @@ function findProhibitedIncome(text, usgaap, filing) {
 function findTotalIncome(text, usgaap, filing) {
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
 
-  // Use the latest/current period column from the income statement. A dash is
-  // a real zero and must not be discarded, otherwise the previous-year column
-  // can accidentally become the "current" revenue.
-  const revenueRegex = /^(?:revenue|revenues|revenue,? net|total revenue|net sales|sales revenue|total income|operating revenue)\b/i;
+  // AAOIFI 3/4/4 uses total income as the denominator. For companies with
+  // little/no operating revenue, this must not collapse to interest income
+  // alone. Build the denominator from the current-period positive income
+  // components actually disclosed in the income statement.
+  const revenueRegex = /^(?:revenue|revenues|revenue,? net|total revenue|net sales|sales revenue|operating revenue)\b/i;
   const interestRegex = /^(?:interest income|interest revenue|income from interest)(?:\s|,|$)/i;
+
   let revenue = null;
   let interestIncome = null;
   let totalOtherIncome = null;
@@ -595,7 +597,7 @@ function findTotalIncome(text, usgaap, filing) {
 
     if (revenue == null && revenueRegex.test(line)) {
       const v = firstFinancialValueAfterLabel(line, revenueRegex);
-      if (v != null) revenue = v;
+      if (v != null) revenue = Math.abs(v);
       continue;
     }
 
@@ -606,33 +608,40 @@ function findTotalIncome(text, usgaap, filing) {
       continue;
     }
 
-    // Prefer the statement's own total-other-income row when available.
-    // This captures gains such as warrant remeasurement without accidentally
-    // summing the same component twice.
-    if (totalOtherIncome == null && /^total other income(?: \(expense\))?/i.test(line)) {
+    // Prefer an explicit gross "total other income" row when the filing has
+    // one. Do NOT use a net other-income/(expense) row as the denominator,
+    // because netting gains against unrelated losses can understate total
+    // income.
+    if (totalOtherIncome == null &&
+        /^total other income(?:\s*\(expense\))?(?:,?\s*net)?\b/i.test(line) &&
+        !/expense|loss/i.test(line)) {
       const v = firstFinancialValueAfterLabel(
         line,
-        /^total other income(?: \(expense\))?/i
+        /^total other income(?:\s*\(expense\))?(?:,?\s*net)?/i
       );
-      if (v != null) {
-        totalOtherIncome = v;
-        continue;
-      }
+      if (v != null && v > 0) totalOtherIncome = v;
+      continue;
     }
 
-    if (/(?:^|\s)(?:other income|gain on|gain from|income from)\b/i.test(line) &&
-        !/expense|loss|net loss/i.test(line)) {
-      const v = firstFinancialValueAfterLabel(line, /^(?:other income|gain on|gain from|income from)/i);
+    // Positive non-operating income components commonly reported by SEC
+    // filers. Negative fair-value changes/losses are not income and are not
+    // allowed to reduce the denominator.
+    const incomeLabel =
+      /^(?:dividend income|gain on|gain from|gain in|change in fair value of .* liability|income from|other income)\b/i;
+
+    if (incomeLabel.test(line) &&
+        !/expense|expenses|loss|decrease|decreases/i.test(line)) {
+      const v = firstFinancialValueAfterLabel(line, incomeLabel);
       if (v != null && v > 0) otherPositive.push(v);
     }
   }
 
   const otherIncome = totalOtherIncome != null
-    ? Math.max(0, totalOtherIncome)
+    ? totalOtherIncome
     : otherPositive.reduce((a, x) => a + x, 0);
 
-  const components = [revenue, interestIncome, otherIncome].filter(v => v != null);
-  const total = components.reduce((sum, v) => sum + Math.abs(v), 0);
+  const components = [revenue, interestIncome, otherIncome].filter(v => v != null && v > 0);
+  const total = components.reduce((sum, v) => sum + v, 0);
 
   if (total > 0) {
     return {
@@ -653,7 +662,6 @@ function findTotalIncome(text, usgaap, filing) {
     ? { value: Math.abs(fact.value), source: "SEC XBRL" }
     : null;
 }
-
 function firstFinancialValueAfterLabel(line, labelRegex) {
   const rest = String(line || "").replace(labelRegex, " ");
   // Preserve em-dash as zero. Ignore dates/years that can appear later.
