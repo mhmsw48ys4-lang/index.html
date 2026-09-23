@@ -453,7 +453,7 @@ function findInterestBearingDebt(text, usgaap, filing) {
   // total liabilities or generic XBRL debt facts that can represent a
   // different accounting concept.
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  const rowRegex = /^(?:convertible debt|convertible note|long-term bank loan|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?|debt|notes payable)\\b/i;
+  const rowRegex = /^(?:convertible debt|convertible note|long-term bank loan|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?|debt|notes payable)\b/i;
   const matched = [];
 
   for (let i = 0; i < lines.length; i++) {
@@ -488,13 +488,13 @@ function findInterestBearingDebt(text, usgaap, filing) {
   // listed liability classes are interest-bearing debt, the AAOIFI debt
   // numerator is zero. This is different from an undisclosed balance sheet:
   // we only return zero when the statement is sufficiently complete.
-  const liabilityStart = lines.findIndex(x => /^(?:liabilities|current liabilities)\\b/i.test(x));
-  const totalLiabilityIndex = lines.findIndex(x => /^total liabilities\\b/i.test(x));
+  const liabilityStart = lines.findIndex(x => /^(?:liabilities|current liabilities)\b/i.test(x));
+  const totalLiabilityIndex = lines.findIndex(x => /^total liabilities\b/i.test(x));
   if (totalLiabilityIndex >= 0) {
     const start = liabilityStart >= 0 ? liabilityStart : Math.max(0, totalLiabilityIndex - 20);
     const liabilityLines = lines.slice(start, totalLiabilityIndex + 1);
     const debtLike = liabilityLines.some(x =>
-      /^(?:convertible debt|convertible note|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?|debt|notes payable)\\b/i.test(x)
+      /^(?:convertible debt|convertible note|short[- ]term borrowings|long[- ]term borrowings|loans payable|bank borrowings|bank borrowing|term loan|senior notes?|debt|notes payable)\b/i.test(x)
     );
     if (!debtLike) {
       return { value: 0, source: "SEC balance sheet — no interest-bearing debt line disclosed" };
