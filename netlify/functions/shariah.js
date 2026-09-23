@@ -616,22 +616,25 @@ function findProhibitedIncome(text, usgaap, filing) {
   return null;
 }
 function findTotalIncome(text, usgaap, filing) {
-  // Prefer the filing's explicit current-period MD&A reconciliation when it
-  // lists the positive income components. This avoids mixing statement columns
-  // when SEC HTML tables are flattened.
-  const mdna = String(text || "").match(
-    /Other income \(expenses\), net, for the three months ended [^\n]{0,180}?is attributable to([\s\S]{0,1200}?)(?:Other income \(expense\), net|Discussion of Operating|Liquidity and Capital Resources)/i
-  );
-  if (mdna) {
-    const part = mdna[1];
+  const raw = String(text || "");
+
+  // Prefer an explicit current-quarter reconciliation when the filing gives
+  // the positive components of "other income (expenses), net". Use the LAST
+  // occurrence because the MD&A discussion comes after the financial tables
+  // and avoids prior-period/table-column ambiguity.
+  const marker = "is attributable to";
+  const markerIndex = raw.toLowerCase().lastIndexOf(marker);
+  if (markerIndex >= 0) {
+    const part = raw.slice(markerIndex + marker.length, markerIndex + 1800);
     const positiveLabels = [
       /interest income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
       /dividend income(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
       /change in fair value of warrant liability(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
       /change in fair value of derivative liability(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
       /gain on legal settlement(?: of)?\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
-      /income from[^$\d]{0,30}\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i
+      /income from[^\$\d]{0,30}\$?\s*([0-9][0-9,]*(?:\.\d+)?)/i
     ];
+
     const positive = [];
     for (const re of positiveLabels) {
       const m = part.match(re);
@@ -640,7 +643,8 @@ function findTotalIncome(text, usgaap, filing) {
         if (Number.isFinite(v) && v > 0) positive.push(v);
       }
     }
-    const explicitTotal = positive.reduce((s, v) => s + v, 0);
+
+    const explicitTotal = positive.reduce((sum, v) => sum + v, 0);
     if (explicitTotal > 0) {
       return {
         value: explicitTotal,
@@ -649,8 +653,8 @@ function findTotalIncome(text, usgaap, filing) {
     }
   }
 
-  const section = getOperationsSection(text);
-  const source = section || text;
+  const section = getOperationsSection(raw);
+  const source = section || raw;
   const lines = source.split(/\r?\n/).map(normalizeLine).filter(Boolean);
   const components = [];
 
@@ -705,7 +709,6 @@ function findTotalIncome(text, usgaap, filing) {
       }
     : null;
 }
-
 function findLabeledFinancialValue(text, labelRegex) {
   const raw = String(text || "");
   const re = new RegExp(labelRegex.source + "[\\s\\S]{0,260}", labelRegex.flags.includes("i") ? labelRegex.flags : labelRegex.flags + "i");
