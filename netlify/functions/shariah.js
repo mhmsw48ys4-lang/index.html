@@ -816,6 +816,25 @@ function parseNumber(raw) {
   return negative ? -n : n;
 }
 
+function parseMarketNumber(raw) {
+  if (raw == null) return null;
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+
+  let s = String(raw).trim().replace(/[$,\s]/g, "");
+  if (!s || s === "-" || s === "—" || s.toLowerCase() === "n/a") return null;
+
+  let multiplier = 1;
+  const suffix = s.slice(-1).toUpperCase();
+  if (suffix === "K") multiplier = 1e3;
+  else if (suffix === "M") multiplier = 1e6;
+  else if (suffix === "B") multiplier = 1e9;
+  else if (suffix === "T") multiplier = 1e12;
+
+  if (multiplier !== 1) s = s.slice(0, -1);
+  const n = Number(s.replace(/\((.*)\)/, "-$1"));
+  return Number.isFinite(n) ? n * multiplier : null;
+}
+
 function decodeHtml(s) {
   return String(s || "")
     .replace(/&nbsp;/gi, " ")
