@@ -56,11 +56,12 @@ exports.handler = async (event) => {
     // Read the complete SEC submission. This is important for foreign issuers:
     // their financial statements are often attached to a 6-K rather than the
     // primary 6-K document itself.
-    const rawSubmission = await fetchText(
-      baseUrl + String(filing.accession) + ".txt",
-      secHeaders
-    );
+    let filingUrl = baseUrl + String(filing.accession) + ".txt";
+    if (filing.form === "6-K" && filing.primaryDocument) {
+      filingUrl = baseUrl + String(filing.primaryDocument);
+    }
 
+    const rawSubmission = await fetchText(filingUrl, secHeaders);
     const filingText = cleanText(rawSubmission);
 
     // Companyfacts is still used when available, but it is no longer the only
@@ -216,11 +217,8 @@ async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
   const filingDates = recent.filingDate || [];
   const reportDates = recent.reportDate || [];
   const primaryDescriptions = recent.primaryDocDescription || [];
-
   const candidates = [];
 
-  // Prefer regular financial reports. Domestic issuers such as CRIS should
-  // never make the function download a long series of 6-K submissions.
   for (let i = 0; i < forms.length; i++) {
     if (!["10-Q", "10-K", "20-F", "40-F"].includes(forms[i])) continue;
     candidates.push({
@@ -234,8 +232,6 @@ async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
     });
   }
 
-  // If a normal quarterly/annual filing exists, use the newest one.
-  // This avoids unnecessary SEC downloads and Netlify timeouts.
   if (candidates.length) {
     candidates.sort((a,b) =>
       String(b.financialPeriod || b.reportDate || b.filingDate || "")
@@ -244,14 +240,44 @@ async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
     return candidates[0];
   }
 
-  // Foreign issuers without 10-Q/10-K may put the financial statements in 6-K.
-  // Only inspect the newest 6-K submissions, in parallel, to keep execution fast.
+  // For foreign issuers, many financial 6-Ks identify the reporting period
+  // directly in the primary-document filename (for example ntcl-20260331x6k.htm).
+  // Use that metadata first so we do not download several 8-10 MB submissions.
   const sixKs = [];
-  for (let i = 0; i < forms.length && sixKs.length < 4; i++) {
+  for (let i = 0; i < forms.length && sixKs.length < 12; i++) {
+    if (forms[i] !== "6-K") continue;
+    const acc = String(accessions[i] || "");
+    const doc = String(primaryDocuments[i] || "");
+    if (!acc) continue;
+
+    const m = doc.match(/(20\\d{2})(\\d{2})(\\d{2})/);
+    if (m) {
+      sixKs.push({
+        acc,
+        primaryDocument: doc,
+        filingDate: filingDates[i],
+        reportDate: m[1] + "-" + m[2] + "-" + m[3],
+        primaryDescription: primaryDescriptions[i] || "",
+        financialPeriod: m[1] + "-" + m[2] + "-" + m[3]
+      });
+    }
+  }
+
+  if (sixKs.length) {
+    sixKs.sort((a,b) =>
+      String(b.financialPeriod).localeCompare(String(a.financialPeriod)) ||
+      String(b.filingDate || "").localeCompare(String(a.filingDate || ""))
+    );
+    return { ...sixKs[0], form: "6-K" };
+  }
+
+  // Last resort for issuers whose 6-K filename does not expose the period.
+  const fallback = [];
+  for (let i = 0; i < forms.length && fallback.length < 2; i++) {
     if (forms[i] !== "6-K") continue;
     const acc = String(accessions[i] || "");
     if (!acc) continue;
-    sixKs.push({
+    fallback.push({
       acc,
       primaryDocument: primaryDocuments[i],
       filingDate: filingDates[i],
@@ -260,19 +286,16 @@ async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
     });
   }
 
-  const found = await Promise.all(sixKs.map(async item => {
+  const found = await Promise.all(fallback.map(async item => {
     const url =
       "https://www.sec.gov/Archives/edgar/data/" +
       String(Number(cik)) + "/" + item.acc.replace(/-/g, "") + "/" + item.acc + ".txt";
-
     try {
       const plain = cleanText(await fetchText(url, secHeaders));
       const financial =
         /condensed consolidated (?:balance sheets|statements of operations)/i.test(plain) ||
         (/financial statements/i.test(plain) && /revenues?/i.test(plain) && /total liabilities/i.test(plain));
-
       if (!financial) return null;
-
       const period = extractLatestFinancialPeriod(plain);
       return {
         form: "6-K",
@@ -283,20 +306,14 @@ async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
         primaryDescription: item.primaryDescription,
         financialPeriod: period || item.reportDate || item.filingDate
       };
-    } catch (_) {
-      return null;
-    }
+    } catch (_) { return null; }
   }));
 
   for (const item of found) if (item) candidates.push(item);
-
-  candidates.sort((a,b) => {
-    const da = String(a.financialPeriod || a.reportDate || a.filingDate || "");
-    const db = String(b.financialPeriod || b.reportDate || b.filingDate || "");
-    if (da !== db) return db.localeCompare(da);
-    return String(b.filingDate || "").localeCompare(String(a.filingDate || ""));
-  });
-
+  candidates.sort((a,b) =>
+    String(b.financialPeriod || b.reportDate || b.filingDate || "")
+      .localeCompare(String(a.financialPeriod || a.reportDate || a.filingDate || ""))
+  );
   return candidates[0] || null;
 }
 function extractLatestFinancialPeriod(text) {
