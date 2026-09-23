@@ -77,12 +77,16 @@ exports.handler = async (event) => {
     const usgaap = factsJson?.facts?.["us-gaap"] || {};
     const dei = factsJson?.facts?.dei || {};
 
-    const currentPrice = await getCurrentPrice(symbol);
-    const shares = await findCurrentSharesOutstanding(filingText, usgaap, dei, filing, recent, cik, secHeaders);
+    const liveMarket = await getCurrentMarketData(symbol);
+    const currentPrice = liveMarket?.price ?? await getCurrentPrice(symbol);
+    const shares = liveMarket?.shares ?? await findCurrentSharesOutstanding(filingText, usgaap, dei, filing, recent, cik, secHeaders);
 
-    const marketCap = currentPrice != null && shares != null
-      ? currentPrice * shares
-      : null;
+    // AAOIFI denominator: use the live market capitalization supplied by the
+    // market-data quote when available. Do not reconstruct today's market cap
+    // from an old SEC share count after a reverse split/issuance.
+    const marketCap = liveMarket?.marketCap != null
+      ? liveMarket.marketCap
+      : (currentPrice != null && shares != null ? currentPrice * shares : null);
 
     const sic = String(submissions.sic || "");
     const sicDescription = String(submissions.sicDescription || "");
@@ -211,7 +215,7 @@ exports.handler = async (event) => {
   }
 };
 
-function chooseLatestFinancialFiling(recent) {
+async function chooseLatestFinancialFiling(recent, cik, secHeaders) {
   const forms = recent.form || [];
   const accessions = recent.accessionNumber || [];
   const primaryDocuments = recent.primaryDocument || [];
@@ -219,46 +223,74 @@ function chooseLatestFinancialFiling(recent) {
   const reportDates = recent.reportDate || [];
   const primaryDescriptions = recent.primaryDocDescription || [];
 
-  const preferred = ["10-Q", "10-K", "20-F", "40-F"];
+  const candidates = [];
 
-  for (const wanted of preferred) {
-    for (let i = 0; i < forms.length; i++) {
-      if (forms[i] === wanted) {
-        return {
-          form: forms[i],
-          accession: accessions[i],
-          primaryDocument: primaryDocuments[i],
-          filingDate: filingDates[i],
-          reportDate: reportDates[i],
-          primaryDescription: primaryDescriptions[i] || ""
-        };
-      }
-    }
+  // Regular financial reports.
+  for (let i = 0; i < forms.length; i++) {
+    if (!["10-Q", "10-K", "20-F", "40-F"].includes(forms[i])) continue;
+    candidates.push({
+      form: forms[i],
+      accession: accessions[i],
+      primaryDocument: primaryDocuments[i],
+      filingDate: filingDates[i],
+      reportDate: reportDates[i],
+      primaryDescription: primaryDescriptions[i] || "",
+      financialPeriod: reportDates[i] || null
+    });
   }
 
-  // Foreign private issuers frequently publish interim financial statements
-  // through 6-K exhibits. Accept a 6-K only when its filing metadata indicates
-  // financial results/statements.
-  for (let i = 0; i < forms.length; i++) {
+  // Foreign private issuers: inspect recent 6-K submissions and choose the
+  // newest one that actually contains financial statements.
+  for (let i = 0; i < Math.min(forms.length, 40); i++) {
     if (forms[i] !== "6-K") continue;
-    const desc = String(primaryDescriptions[i] || "").toLowerCase();
-    const doc = String(primaryDocuments[i] || "").toLowerCase();
+    const acc = String(accessions[i] || "");
+    if (!acc) continue;
 
-    if (
-      /financial|statement|result|earnings|quarter|interim|report/.test(desc + " " + doc)
-    ) {
-      return {
-        form: forms[i],
-        accession: accessions[i],
+    const url =
+      "https://www.sec.gov/Archives/edgar/data/" +
+      String(Number(cik)) + "/" + acc.replace(/-/g, "") + "/" + acc + ".txt";
+
+    try {
+      const plain = cleanText(await fetchText(url, secHeaders));
+      const financial =
+        /condensed consolidated (?:balance sheets|statements of operations)/i.test(plain) ||
+        /financial statements/i.test(plain) && /revenues?/i.test(plain) && /total liabilities/i.test(plain);
+
+      if (!financial) continue;
+
+      const period = extractLatestFinancialPeriod(plain);
+      candidates.push({
+        form: "6-K",
+        accession: acc,
         primaryDocument: primaryDocuments[i],
         filingDate: filingDates[i],
-        reportDate: reportDates[i],
-        primaryDescription: primaryDescriptions[i] || ""
-      };
-    }
+        reportDate: period || reportDates[i] || filingDates[i],
+        primaryDescription: primaryDescriptions[i] || "",
+        financialPeriod: period || reportDates[i] || filingDates[i]
+      });
+    } catch (_) {}
   }
 
-  return null;
+  candidates.sort((a,b) => {
+    const da = String(a.financialPeriod || a.reportDate || a.filingDate || "");
+    const db = String(b.financialPeriod || b.reportDate || b.filingDate || "");
+    if (da !== db) return db.localeCompare(da);
+    return String(b.filingDate || "").localeCompare(String(a.filingDate || ""));
+  });
+
+  return candidates[0] || null;
+}
+
+function extractLatestFinancialPeriod(text) {
+  const dates = [];
+  const re = /(?:as of|ended|ending|year ended|six months ended|three months ended|nine months ended)\s+(?:the\s+)?([A-Z][a-z]+\s+\d{1,2},\s+20\d{2})/gi;
+  let m;
+  while ((m = re.exec(text))) {
+    const d = Date.parse(m[1]);
+    if (!Number.isNaN(d)) dates.push(new Date(d).toISOString().slice(0,10));
+  }
+  dates.sort();
+  return dates.length ? dates[dates.length - 1] : null;
 }
 
 async function findCurrentSharesOutstanding(text, usgaap, dei, filing, recent, cik, secHeaders) {
@@ -511,6 +543,35 @@ function latestFactFromFacts(names, primaryFacts, secondaryFacts, filing) {
   }
 
   return null;
+}
+
+async function getCurrentMarketData(symbol) {
+  const url =
+    "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
+    encodeURIComponent(symbol);
+
+  try {
+    const response = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }
+    });
+    if (!response.ok) return null;
+
+    const json = await response.json();
+    const q = json?.quoteResponse?.result?.[0];
+    if (!q) return null;
+
+    const price = Number(q.regularMarketPrice ?? q.postMarketPrice);
+    const marketCap = Number(q.marketCap);
+    const shares = Number(q.sharesOutstanding);
+
+    return {
+      price: Number.isFinite(price) && price > 0 ? price : null,
+      marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
+      shares: Number.isFinite(shares) && shares > 0 ? shares : null
+    };
+  } catch (_) {
+    return null;
+  }
 }
 
 async function getCurrentPrice(symbol) {
