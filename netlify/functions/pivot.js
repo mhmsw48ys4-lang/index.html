@@ -10,8 +10,9 @@ exports.handler = async (event) => {
 
   try {
     // نستخدم Nasdaq Screener كمصدر لقائمة الأسهم بدلاً من Yahoo Screener.
-    // الهدف: أسهم أمريكية بسعر $1-$7 وقيمة سوقية <= $10M.
-    // نأخذ Nasdaq + NYSE + AMEX ثم نفلتر محلياً، وبعدها index.html يفحص القاع.
+    // الهدف: أسهم أمريكية بسعر $1-$7 ضمن نطاق small-cap واسع.
+    // لا نحصر القائمة بقيمة سوقية شديدة الانخفاض حتى لا تختفي معظم الأسهم المرشحة للاستراتيجية.
+    // نأخذ Nasdaq + NYSE + AMEX ثم نفلتر محلياً، وبعدها index.html يفحص القاع والشروط الفنية.
     const exchanges = ["NASDAQ", "NYSE", "AMEX"];
 
     async function getExchange(exchange) {
@@ -72,7 +73,7 @@ exports.handler = async (event) => {
           price <= 7 &&
           Number.isFinite(marketCap) &&
           marketCap > 0 &&
-          marketCap <= 10000000
+          marketCap <= 250000000
         ) {
           map.set(symbol, q);
         }
