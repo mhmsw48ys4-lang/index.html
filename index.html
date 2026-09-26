@@ -371,6 +371,30 @@ grid-template-columns:1fr 1fr
 }
 
 }
+
+/* =========================
+   تصميم المسح الجديد
+========================= */
+.pivotScanner{padding:18px}
+.scannerTop{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px}
+.scannerBadge{background:#183d50;color:#68b9ff;border:1px solid #28566d;padding:7px 10px;border-radius:10px;font-size:11px;font-weight:900;white-space:nowrap}
+.filterGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.filterBox{background:#102337;border:1px solid #24485f;border-radius:13px;padding:11px}
+.filterLabel{color:#8fa6b7;font-size:11px;font-weight:800;margin-bottom:7px}
+.rangeRow{display:flex;align-items:center;gap:7px}
+.filterInput{height:42px;min-width:0;width:100%;border:1px solid #34536a;border-radius:10px;background:#0d1c2c;color:#fff;padding:0 10px;font:inherit;outline:none}
+.filterInput:focus{border-color:#2878ff;box-shadow:0 0 0 2px rgba(40,120,255,.12)}
+.filterInput.full{width:100%}
+.scannerRules{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}
+.scannerRules span{background:#0f2233;border:1px solid #23465d;color:#9fb4c2;border-radius:999px;padding:6px 9px;font-size:11px}
+.pivotScanButton{background:linear-gradient(135deg,#2878ff,#2464d9);box-shadow:0 8px 18px rgba(40,120,255,.18)}
+.pivotScanButton:active{transform:translateY(1px)}
+@media(max-width:520px){
+  .scannerTop{align-items:stretch;flex-direction:column}
+  .scannerBadge{align-self:flex-start}
+  .filterGrid{grid-template-columns:1fr}
+}
+
 </style>
 </head>
 
@@ -422,64 +446,71 @@ placeholder="اكتب رمز السهم مثل NTCL">
      فرز التقسيمات
 ========================= -->
 
-<div class="scanner">
 
-<div class="scannerTitle">
-📊 مسح أسهم الارتكاز
+<div class="scanner pivotScanner">
+
+  <div class="scannerTop">
+    <div>
+      <div class="scannerTitle">🔎 المسح</div>
+      <div class="scannerDesc">فلترة الأسهم حسب شروط استراتيجية الارتكاز، ثم عرض الأسهم المطابقة فقط.</div>
+    </div>
+    <div class="scannerBadge">استراتيجية الارتكاز</div>
+  </div>
+
+  <div class="filterGrid">
+    <div class="filterBox">
+      <div class="filterLabel">السعر</div>
+      <div class="rangeRow">
+        <input id="minPrice" class="filterInput" type="number" step="0.01" value="1" placeholder="من">
+        <span>—</span>
+        <input id="maxPrice" class="filterInput" type="number" step="0.01" value="7" placeholder="إلى">
+      </div>
+    </div>
+
+    <div class="filterBox">
+      <div class="filterLabel">RSI 14</div>
+      <div class="rangeRow">
+        <input id="minRsi" class="filterInput" type="number" step="1" value="23" placeholder="من">
+        <span>—</span>
+        <input id="maxRsi" class="filterInput" type="number" step="1" value="35" placeholder="إلى">
+      </div>
+    </div>
+
+    <div class="filterBox">
+      <div class="filterLabel">RVOL</div>
+      <input id="minRvol" class="filterInput full" type="number" step="0.1" value="1.2" placeholder="الحد الأدنى">
+    </div>
+
+    <div class="filterBox">
+      <div class="filterLabel">الثبات</div>
+      <select id="minStability" class="filterInput full">
+        <option value="3" selected>3 أيام أو أكثر</option>
+        <option value="4">4 أيام أو أكثر</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="scannerRules">
+    <span>✓ دعم/قاع واضح</span>
+    <span>✓ ثبات بعد القاع</span>
+    <span>✓ RSI منخفض</span>
+    <span>✓ تحسن الحجم</span>
+  </div>
+
+  <button class="scanButton pivotScanButton" onclick="autoScanSplits()">
+    🔎 بدء المسح
+  </button>
+
+  <div id="scanStatus" class="scanStatus"></div>
+  <div id="scanResults" class="scanResults"></div>
 </div>
 
-<div class="scannerDesc">
-المسح التلقائي يبحث عن الأسهم بين $1 و $7 التي بقيت فوق قاعها 3 أيام أو أكثر، بدون اشتراط هبوط قبل القاع. بعدها تفرزها يدوياً بشروطك الأصلية.
-</div>
-
-<button
-class="scanButton"
-onclick="autoScanSplits()">
-🔎 مسح أسهم الارتكاز تلقائياً
-</button>
-
-<div style="height:8px"></div>
-
-<div class="scannerDesc">
-أو افحص رموزاً محددة يدوياً:
-</div>
-
-<textarea
-id="scanInput"
-class="scanInput"
-placeholder="مثال:
-NTCL
-PN
-FEMY
-AMIX
-
-أو اكتبها مفصولة بفواصل"
-></textarea>
-
-<button
-class="scanButton"
-onclick="scanSplits()">
-بدء الفرز اليدوي
-</button>
-
-<div id="scanStatus" class="scanStatus"></div>
-
-<div id="scanResults" class="scanResults"></div>
-
-</div>
 
 
 
 
 
 
-<div class="shariah" style="max-width:900px;margin:0 auto 20px;padding:18px;background:#0d1c2c;border:1px solid #203b50;border-radius:18px">
-<div class="scannerTitle">☪️ الفرز الشرعي — AAOIFI</div>
-<div class="scannerDesc">يفحص نشاط الشركة أولاً. إذا كان النشاط غير جائز تُستبعد مباشرة. وإذا كان النشاط مباحاً ينتقل للفحص المالي باستخدام أحدث تقرير مالي منشور من SEC، مع القيمة السوقية الحالية وقت الفحص. الكاش العادي لا يُعتبر تلقائياً وديعة بفائدة، ولا يتم افتراض القيم المفقودة.</div>
-<textarea id="shariahInput" class="scanInput" placeholder="مثال:\nNTCL\nPN\nFEMY\nAMIX\n\nأو اكتب الرموز مفصولة بفواصل"></textarea>
-<button class="scanButton" onclick="scanShariah()">☪️ بدء فرز AAOIFI</button>
-<div id="shariahStatus" class="scanStatus"></div><div id="shariahResults" class="scanResults"></div>
-</div>
 <script>
 
 const stocks={};
@@ -1814,7 +1845,7 @@ text
 
 
 /* =========================
-   المسح التلقائي للتقسيمات
+   المسح التلقائي لاستراتيجية الارتكاز
 ========================= */
 
 function isoDateDaysAgo(days){
@@ -1911,7 +1942,13 @@ async function autoScanSplits(){
   const status=document.getElementById("scanStatus");
   const results=document.getElementById("scanResults");
   results.innerHTML="";
-  status.textContent="جاري مسح الأسهم $1–$7 والبحث عن قاع بقي السعر فوقه 3 جلسات تداول كاملة أو أكثر...";
+  const minPrice=Number(document.getElementById("minPrice")?.value||1);
+  const maxPrice=Number(document.getElementById("maxPrice")?.value||7);
+  const minRsi=Number(document.getElementById("minRsi")?.value||23);
+  const maxRsi=Number(document.getElementById("maxRsi")?.value||35);
+  const minRvol=Number(document.getElementById("minRvol")?.value||1.2);
+  const minStability=Number(document.getElementById("minStability")?.value||3);
+  status.textContent="جاري مسح الأسهم وتطبيق شروط الاستراتيجية...";
 
   try{
     const response=await fetch("/.netlify/functions/pivot",{cache:"no-store"});
@@ -1995,6 +2032,16 @@ async function autoScanSplits(){
           complete:base.count>=3,
           pivot:base.pivot
         };
+
+        const price=Number(a.latest?.close);
+        const rsiValue=Number(a.rsi);
+        const rvolValue=Number(a.rvol);
+        const stabilityDays=Number(a.stability?.count||0);
+
+        if(!Number.isFinite(price) || price<minPrice || price>maxPrice) return null;
+        if(!Number.isFinite(rsiValue) || rsiValue<minRsi || rsiValue>maxRsi) return null;
+        if(!Number.isFinite(rvolValue) || rvolValue<minRvol) return null;
+        if(stabilityDays<minStability) return null;
 
         return a;
       }));
@@ -2480,11 +2527,7 @@ addStock();
 );
 
 
-function parseShariahSymbols(){const t=document.getElementById("shariahInput").value.trim().toUpperCase();return t?[...new Set(t.split(/[\\s,،;]+/).filter(Boolean))]:[];}
-function shMoney(v){if(v==null||!Number.isFinite(Number(v)))return "-";let n=Number(v);if(Math.abs(n)>=1e9)return "$"+(n/1e9).toFixed(2)+"B";if(Math.abs(n)>=1e6)return "$"+(n/1e6).toFixed(2)+"M";if(Math.abs(n)>=1e3)return "$"+(n/1e3).toFixed(1)+"K";return "$"+n.toFixed(2);}
-function shRow(title,x){if(!x)return "";let s=x.pass===true?"اجتاز":x.pass===false?"لم يجتز":"بيانات غير كافية";let cl=x.pass===true?"green":x.pass===false?"red":"yellow";let ratio=x.ratio==null?"-":Number(x.ratio).toFixed(2)+"%";return '<div class="row"><span>'+title+'</span><strong class="'+cl+'">'+s+' — '+ratio+' (الحد '+x.limit+'%)</strong></div>';}
-function renderShariah(a){let st=a.status==="compliant"?"متوافق مع شروط الفحص المطبقة":a.status==="rejected_activity"?"مستبعد بسبب النشاط":a.status==="rejected_financial"?"لم يجتز الفحص المالي":"لا يمكن الحسم — بيانات غير كافية";let cl=a.status==="compliant"?"green":a.status==="insufficient"?"yellow":"red";return '<div class="scanCard"><div class="scanHead"><div class="scanSymbol">'+escapeHtml(a.symbol)+'</div><div class="'+cl+'">'+st+'</div></div><div class="scanGrid"><div class="scanItem"><div class="scanLabel">نشاط الشركة</div><div class="scanValue">'+escapeHtml(a.sicDescription||a.activity||"-")+'</div></div><div class="scanItem"><div class="scanLabel">SIC</div><div class="scanValue">'+escapeHtml(a.sic||"-")+'</div></div><div class="scanItem"><div class="scanLabel">آخر تقرير</div><div class="scanValue">'+escapeHtml((a.filing?.form||"-")+" — "+(a.filing?.reportDate||"-"))+'</div></div><div class="scanItem"><div class="scanLabel">القيمة السوقية وقت الفحص</div><div class="scanValue">'+shMoney(a.marketCap)+'</div></div></div><div class="box" style="margin:12px 0 0"><div class="boxTitle">حسابات AAOIFI</div>'+shRow("الديون القائمة على الفائدة",a.checks?.debt)+shRow("الودائع التي تأخذ فائدة",a.checks?.interestTakingDeposits)+shRow("الدخل من المكونات المحرمة",a.checks?.prohibitedIncome)+'</div><div class="scanStatus">'+escapeHtml(a.reason||a.note||"")+'</div></div>';}
-async function scanShariah(){const syms=parseShariahSymbols(),s=document.getElementById("shariahStatus"),r=document.getElementById("shariahResults");r.innerHTML="";if(!syms.length){s.innerHTML='<div class="error">أدخل رموز الأسهم أولاً.</div>';return;}let out=[],err=[];for(let i=0;i<syms.length;i++){s.textContent="جاري فحص AAOIFI لـ "+syms[i]+" — "+(i+1)+" من "+syms.length+"...";try{let q=await fetch("/.netlify/functions/shariah?symbol="+encodeURIComponent(syms[i]),{cache:"no-store"});let raw=await q.text();let j=null;try{j=JSON.parse(raw);}catch(_){j={};}if(!q.ok){throw new Error((j.error||"HTTP "+q.status+" "+q.statusText)+(j.details?" — "+j.details:"")+(raw&&!j.error?" — "+raw.slice(0,220):""));}out.push(j);}catch(e){err.push(syms[i]+": "+e.message);}}s.textContent="انتهى فحص AAOIFI ✓ — تم فحص "+out.length+" من "+syms.length+" رمز.";r.innerHTML=out.map(renderShariah).join("")+(err.length?'<div class="error">تعذر فحص:<br>'+escapeHtml(err.join("\n"))+'</div>':"");}
+
 </script>
 
 </body>
