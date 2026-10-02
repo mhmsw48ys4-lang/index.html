@@ -26,6 +26,32 @@ exports.handler = async (event) => {
     return j;
   };
 
+
+  const yahoo = async (symbol) => {
+    const end = Math.floor(Date.now()/1000);
+    let periodDays = 420, interval = "1d";
+    if(tf === "1w"){ periodDays = 1500; interval = "1wk"; }
+    if(tf === "4h"){ periodDays = 30; interval = "60m"; }
+    const start = end - periodDays*86400;
+    const u = new URL("https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(symbol));
+    u.searchParams.set("period1", String(start));
+    u.searchParams.set("period2", String(end));
+    u.searchParams.set("interval", interval);
+    u.searchParams.set("events", "div,splits");
+    u.searchParams.set("includeAdjustedClose", "true");
+    const r = await fetch(u, {headers: {"User-Agent":"Mozilla/5.0"}});
+    if(!r.ok) throw new Error("Yahoo Finance "+r.status);
+    const j = await r.json();
+    const res = j?.chart?.result?.[0];
+    if(!res) throw new Error(j?.chart?.error?.description || "Yahoo data unavailable");
+    const ts=res.timestamp||[], q=res.indicators?.quote?.[0]||{}, adj=res.indicators?.adjclose?.[0]?.adjclose||[];
+    const raw=ts.map((t,i)=>({date:new Date(t*1000).toISOString(),o:+q.open?.[i],h:+q.high?.[i],l:+q.low?.[i],c:+(adj[i]??q.close?.[i]),v:+q.volume?.[i]||0}))
+      .filter(x=>Number.isFinite(x.c)&&Number.isFinite(x.o)&&Number.isFinite(x.h)&&Number.isFinite(x.l));
+    if(tf !== "4h") return raw.sort((a,b)=>a.date.localeCompare(b.date));
+    const r4=[]; for(let i=0;i<raw.length;i+=4){const g=raw.slice(i,i+4);if(g.length===4)r4.push({date:g[3].date,o:g[0].o,h:Math.max(...g.map(x=>x.h)),l:Math.min(...g.map(x=>x.l)),c:g[3].c,v:g.reduce((s,x)=>s+x.v,0)})}
+    return r4;
+  };
+
   const dateDaysAgo = (days) => {
     const d=new Date(Date.now()-days*86400000);
     return d.toISOString().slice(0,10);
@@ -107,7 +133,7 @@ exports.handler = async (event) => {
     const batch=symbols.slice(i,i+6);
     const got=await Promise.all(batch.map(async symbol=>{
       try{
-        const bars=massiveKey?await getBarsMassive(symbol):await getBarsAlpha(symbol);
+        const bars=massiveKey?await getBarsMassive(symbol):await yahoo(symbol);
         if(bars.length<35) throw new Error("بيانات تاريخية غير كافية");
         const close=bars.map(x=>x.c), vol=bars.map(x=>x.v), last=bars[bars.length-1];
         const e20=ema(close,20),e30=ema(close,30),e50=ema(close,50),rr=rsi(close),mm=macd(close);
@@ -133,5 +159,5 @@ exports.handler = async (event) => {
     results.push(...got.filter(Boolean));
   }
   results.sort((a,b)=>b.score-a.score);
-  return out(200,{stocks:results,updated:new Date().toLocaleString("ar-SA"),tf,source:massiveKey?"Massive":"Alpha Vantage",errors:errors.slice(0,10),universeCount:symbols.length});
+  return out(200,{stocks:results,updated:new Date().toLocaleString("ar-SA"),tf,source:massiveKey?"Massive":"Yahoo Finance",errors:errors.slice(0,10),universeCount:symbols.length});
 };
