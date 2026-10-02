@@ -123,7 +123,8 @@ async function load(){
    const r=await fetch(`/.netlify/functions/stock?tf=${encodeURIComponent(state.tf)}`);
    if(!r.ok) throw new Error("تعذر الاتصال بوظيفة البيانات");
    const j=await r.json(); state.data=j.stocks||[];
-   $("lastScan").textContent=j.updated||new Date().toLocaleTimeString("ar-SA");
+   $("lastScan").textContent=(j.updated||new Date().toLocaleTimeString("ar-SA"))+(j.source?" · "+j.source:"");
+   if(!state.data.length && j.errors?.length){ $("results").innerHTML=`<div class="card empty">⚠️ لم تصل بيانات قابلة للفحص.<br><small>${esc(j.errors.join(" | "))}</small></div>`; return; }
    render();
  }catch(e){
    $("results").innerHTML=`<div class="card empty">⚠️ ${esc(e.message)}<br><small>تأكد من إعداد مفاتيح API في Netlify ثم أعد المحاولة.</small></div>`;
