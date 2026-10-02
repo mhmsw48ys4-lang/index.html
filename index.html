@@ -53,14 +53,14 @@ button,input,select{font:inherit}.app{max-width:820px;margin:auto;padding:14px 1
 
   <div class="filterpanel" id="filterPanel">
     <div class="fields">
-      <div class="field"><label>نطاق السعر</label><select id="priceRange"><option value="1-10">1 - 10 دولار</option><option value="1-7">1 - 7 دولار</option><option value="1-5">1 - 5 دولار</option></select></div>
-      <div class="field"><label>الحد الأدنى للحجم</label><select id="minVol"><option value="100000">100K</option><option value="500000">500K</option><option value="1000000">1M</option><option value="2000000">2M</option></select></div>
-      <div class="field"><label>RSI</label><select id="rsiRange"><option value="20-40">20 - 40</option><option value="23-27">23 - 27</option><option value="23-35">23 - 35</option></select></div>
-      <div class="field"><label>RVOL الأدنى</label><select id="minRvol"><option value="0.8">0.8</option><option value="1.2">1.2</option><option value="1.5">1.5</option><option value="2">2.0</option></select></div>
+      <div class="field"><label>نطاق السعر</label><select id="priceRange"><option value="1-7">1 - 7 دولار</option><option value="1-10">1 - 10 دولار</option><option value="1-5">1 - 5 دولار</option></select></div>
+      <div class="field"><label>الحد الأدنى للحجم</label><select id="minVol"><option value="500000">500K</option><option value="100000">100K</option><option value="1000000">1M</option><option value="2000000">2M</option></select></div>
+      <div class="field"><label>RSI</label><select id="rsiRange"><option value="23-27">23 - 27</option><option value="20-40">20 - 40</option><option value="23-35">23 - 35</option></select></div>
+      <div class="field"><label>RVOL الأدنى</label><select id="minRvol"><option value="1.2">1.2</option><option value="0.8">0.8</option><option value="1.5">1.5</option><option value="2">2.0</option></select></div>
       <div class="field"><label>ثبات</label><select id="stableDays"><option value="4">4 أيام</option><option value="3">3 أيام</option><option value="2">2 يوم</option><option value="0">بدون شرط</option></select></div>
       <div class="field"><label>البعد عن الدعم</label><select id="maxDistance"><option value="20">≤ 20%</option><option value="30">≤ 30%</option><option value="50">≤ 50%</option><option value="999">بدون شرط</option></select></div>
-      <div class="field"><label>MACD</label><select id="macdFilter"><option value="any">الكل</option><option value="positive">إيجابي فقط</option></select></div>
-      <div class="field"><label>المتوسطات 20/30/50</label><select id="emaFilter"><option value="any">الكل</option><option value="above">فوق الثلاثة</option></select></div>
+      <div class="field"><label>MACD</label><select id="macdFilter"><option value="positive">إيجابي فقط</option><option value="any">الكل</option></select></div>
+      <div class="field"><label>المتوسطات 20/30/50</label><select id="emaFilter"><option value="above">فوق الثلاثة</option><option value="any">الكل</option></select></div>
       <div class="field"><label>نسبة الشورت اليومية</label><select id="minShortRatio"><option value="0">الكل</option><option value="10">≥ 10%</option><option value="20">≥ 20%</option><option value="30">≥ 30%</option></select></div>
       <div class="field"><label>الأيام منذ التقسيم</label><select id="splitDays"><option value="all">الكل</option><option value="100">آخر 100 يوم</option><option value="50">آخر 50 يوم</option><option value="30">آخر 30 يوم</option></select></div>
     </div>
@@ -135,10 +135,14 @@ function showDetail(symbol){
  $("detail").innerHTML=`<div class="detailtop"><div><h2>${esc(x.symbol)}</h2><div class="sub">${esc(x.name||"")}</div><span class="badge">${status(x.score)[0]} · ${fmt(x.score,0)}/100</span></div><div class="detailprice"><b>$${fmt(x.price,2)}</b><div class="${Number(x.change)>=0?"up":"down"}">${Number(x.change)>=0?"+":""}${fmt(x.change,2)}%</div></div></div>
  <div class="detailgrid">
   <div class="ditem"><label>السعر بعد الإغلاق</label><b>$${fmt(x.afterHours,2)}</b></div><div class="ditem"><label>الدعم المعتمد</label><b>$${fmt(x.support,2)}</b></div>
+  <div class="ditem"><label>المقاومة</label><b>$${fmt(x.resistance,2)}</b></div><div class="ditem"><label>المسافة عن الدعم</label><b>${fmt(x.distance,1)}%</b></div>
   <div class="ditem"><label>الفلوت</label><b>${vol(x.float)}</b></div><div class="ditem"><label>القيمة السوقية</label><b>${vol(x.marketCap)}</b></div>
-  <div class="ditem"><label>Short Interest</label><b>${vol(x.shortInterest)}</b></div><div class="ditem"><label>Short Volume اليوم</label><b>${vol(x.shortVolume)}</b></div>
-  <div class="ditem"><label>نسبة الشورت اليومية</label><b>${fmt(x.shortRatio*100,1)}%</b></div><div class="ditem"><label>Borrow Fee</label><b>${x.borrowFee==null?"غير متاح":fmt(x.borrowFee,2)+"%"}</b></div>
-  <div class="ditem"><label>التقسيم</label><b>${x.splitDate?esc(x.splitDate):"لا يوجد"}</b></div><div class="ditem"><label>أعلى سعر بعد التقسيم</label><b>$${fmt(x.highAfterSplit,2)}</b></div>
+  <div class="ditem"><label>Short Interest</label><b>${vol(x.shortInterest)}</b></div><div class="ditem"><label>نسبة الشورت من الفلوت</label><b>${x.float&&x.shortInterest?fmt(x.shortInterest/x.float*100,2)+"%":"غير متاح"}</b></div>
+  <div class="ditem"><label>Short Volume اليوم</label><b>${vol(x.shortVolume)}</b></div><div class="ditem"><label>نسبة الشورت اليومية</label><b>${x.shortRatio!=null?fmt(x.shortRatio*100,1)+"%":"غير متاح"}</b></div>
+  <div class="ditem"><label>Days to Cover</label><b>${fmt(x.daysToCover,2)}</b></div><div class="ditem"><label>Borrow Fee</label><b>${x.borrowFee==null?"غير متاح":fmt(x.borrowFee,2)+"%"}</b></div>
+  <div class="ditem"><label>الأسهم المتاحة للاقتراض</label><b>${x.shortAvailable==null?"غير متاح":vol(x.shortAvailable)}</b></div><div class="ditem"><label>Gap</label><b>${x.gap==null?"غير متاح":fmt(x.gap,2)+"%"}</b></div>
+  <div class="ditem"><label>التقسيم</label><b>${x.splitDate?esc(x.splitDate):"لا يوجد"}</b></div><div class="ditem"><label>أيام منذ التقسيم</label><b>${x.splitDays==null?"—":x.splitDays}</b></div>
+  <div class="ditem"><label>أعلى سعر بعد التقسيم</label><b>$${fmt(x.highAfterSplit,2)}</b></div><div class="ditem"><label>نوع التقسيم</label><b>${x.splitFrom&&x.splitTo?esc(x.splitFrom+":"+x.splitTo):"غير متاح"}</b></div>
  </div>
  <div class="sectionTitle">مراحل استراتيجية الارتكاز</div><div class="steps">
   ${[
