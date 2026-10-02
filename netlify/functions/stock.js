@@ -123,24 +123,33 @@ exports.handler = async (event) => {
   }
 
   async function borrowFee(symbol){
-    if(!chartExchangeKey) return {};
+    const parsePage=async()=>{
+      const url="https://chartexchange.com/symbol/nasdaq-"+encodeURIComponent(symbol.toLowerCase())+"/borrow-fee/";
+      const r=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0"}});
+      if(!r.ok) return {};
+      const html=await r.text();
+      const text=html.replace(/<script[\\s\\S]*?<\\/script>/gi," ").replace(/<style[\\s\\S]*?<\\/style>/gi," ").replace(/<[^>]+>/g," ").replace(/&nbsp;/g," ").replace(/\\s+/g," ");
+      const m=text.match(/As of\\s+([^,]+),\\s+there were\\s+([\\d,]+)\\s+shares available with a fee of\\s+([\\d.]+)%/i);
+      if(!m) return {};
+      const rebateMatch=text.match(/rebate(?: fee)?[^0-9-]*(-?[\\d.]+)%/i);
+      return {borrowFee:Number(m[3]),borrowAvailable:Number(m[2].replace(/,/g,"")),borrowRebate:rebateMatch?Number(rebateMatch[1]):null,borrowUpdated:m[1]};
+    };
     try{
-      const u=new URL("https://chartexchange.com/api/v1/data/stocks/borrow-fee/ib/");
-      u.searchParams.set("api_key",chartExchangeKey);
-      u.searchParams.set("symbol",symbol);
-      u.searchParams.set("ordering","-timestamp");
-      u.searchParams.set("page_size","1");
-      const r=await fetch(u);
-      if(!r.ok) throw new Error("ChartExchange CTB "+r.status);
-      const j=await r.json();
-      const x=(j?.results||j?.data||[])[0]||{};
-      const num=(...keys)=>{for(const k of keys){if(x[k]!==undefined&&x[k]!==null&&x[k]!==""){const n=Number(x[k]);if(Number.isFinite(n))return n}}return null};
-      return {
-        borrowFee:num("fee","fee_percent","fee_pct","borrow_fee","borrow_fee_percent","ctb"),
-        borrowAvailable:num("available","shares_available","shares","available_shares"),
-        borrowRebate:num("rebate","rebate_percent","rebate_pct"),
-        borrowUpdated:x.timestamp??x.date??x.updated_at??null
-      };
+      if(chartExchangeKey){
+        const u=new URL("https://chartexchange.com/api/v1/data/stocks/borrow-fee/ib/");
+        u.searchParams.set("api_key",chartExchangeKey);
+        u.searchParams.set("symbol",symbol);
+        u.searchParams.set("ordering","-timestamp");
+        u.searchParams.set("page_size","1");
+        const r=await fetch(u);
+        if(r.ok){
+          const j=await r.json();
+          const x=(j?.results||j?.data||[])[0]||{};
+          const num=(...keys)=>{for(const k of keys){if(x[k]!==undefined&&x[k]!==null&&x[k]!==""){const n=Number(x[k]);if(Number.isFinite(n))return n}}return null};
+          return {borrowFee:num("fee","fee_percent","fee_pct","borrow_fee","borrow_fee_percent","ctb"),borrowAvailable:num("available","shares_available","shares","available_shares"),borrowRebate:num("rebate","rebate_percent","rebate_pct"),borrowUpdated:x.timestamp??x.date??x.updated_at??null};
+        }
+      }
+      return await parsePage();
     }catch{return {}}
   }
 
