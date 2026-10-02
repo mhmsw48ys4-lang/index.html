@@ -146,7 +146,6 @@ exports.handler = async (event) => {
   }
 
   const symbols=await universe();
-  if(!massiveKey && !alphaKey) return out(500,{error:"لا يوجد API key في Netlify. أضف MASSIVE_API_KEY أو ALPHA_VANTAGE_API_KEY."});
 
   const results=[], errors=[];
   for(let i=0;i<symbols.length;i+=6){
@@ -164,7 +163,8 @@ exports.handler = async (event) => {
         const prev=bars[Math.max(0,bars.length-2)], rebound=last.c>last.o&&last.c>prev.c, macdImproving=mm!=null&&mmp!=null&&mm>mmp, emaRecovery=(e20!=null&&e30!=null&&e50!=null&&e20p!=null&&e30p!=null&&e50p!=null)&&e20>e20p&&e30>e30p&&e50>e50p, volumeImproving=last.v>prev.v&&rv>=1.2, nearSupport=distance<=20, supportHold=last.c>support&&last.l<=support*1.05;
         let score=0;
         if(nearSupport)score+=15;else if(distance<=30)score+=8;
-        if(macdImproving)score+=12;\n        if(emaRecovery)score+=12;
+        if(macdImproving)score+=12;
+        if(emaRecovery)score+=12;
         if(volumeImproving)score+=10;
         if(stability>=4)score+=10;else if(stability>=2)score+=5;
         if(supportHold)score+=8;
