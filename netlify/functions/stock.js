@@ -3,7 +3,6 @@ exports.handler = async (event) => {
   const tf = q.tf || "1d";
   const massiveKey = process.env.MASSIVE_API_KEY;
   const alphaKey = process.env.ALPHA_VANTAGE_API_KEY;
-  const chartExchangeKey = process.env.CHARTEXCHANGE_API_KEY;
   const configured = (process.env.SCAN_SYMBOLS || "").split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
   const fallbackSymbols = ["NTCL","PN","FEMY","AMIX","SILO","PRFX","DXST","INUV","BGL","ATPC","MTEN","AMOD","PTLE","SMSI","CETX","WXM","ICCM"];
   const headers = {"Access-Control-Allow-Origin":"*","Content-Type":"application/json","Cache-Control":"no-store"};
@@ -122,37 +121,6 @@ exports.handler = async (event) => {
     return fallbackSymbols;
   }
 
-  async function borrowFee(symbol){
-    const parsePage=async()=>{
-      const url="https://chartexchange.com/symbol/nasdaq-"+encodeURIComponent(symbol.toLowerCase())+"/borrow-fee/";
-      const r=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0"}});
-      if(!r.ok) return {};
-      const html=await r.text();
-      const text=html.replace(/<script[\\s\\S]*?<\\/script>/gi," ").replace(/<style[\\s\\S]*?<\\/style>/gi," ").replace(/<[^>]+>/g," ").replace(/&nbsp;/g," ").replace(/\\s+/g," ");
-      const m=text.match(/As of\\s+([^,]+),\\s+there were\\s+([\\d,]+)\\s+shares available with a fee of\\s+([\\d.]+)%/i);
-      if(!m) return {};
-      const rebateMatch=text.match(/rebate(?: fee)?[^0-9-]*(-?[\\d.]+)%/i);
-      return {borrowFee:Number(m[3]),borrowAvailable:Number(m[2].replace(/,/g,"")),borrowRebate:rebateMatch?Number(rebateMatch[1]):null,borrowUpdated:m[1]};
-    };
-    try{
-      if(chartExchangeKey){
-        const u=new URL("https://chartexchange.com/api/v1/data/stocks/borrow-fee/ib/");
-        u.searchParams.set("api_key",chartExchangeKey);
-        u.searchParams.set("symbol",symbol);
-        u.searchParams.set("ordering","-timestamp");
-        u.searchParams.set("page_size","1");
-        const r=await fetch(u);
-        if(r.ok){
-          const j=await r.json();
-          const x=(j?.results||j?.data||[])[0]||{};
-          const num=(...keys)=>{for(const k of keys){if(x[k]!==undefined&&x[k]!==null&&x[k]!==""){const n=Number(x[k]);if(Number.isFinite(n))return n}}return null};
-          return {borrowFee:num("fee","fee_percent","fee_pct","borrow_fee","borrow_fee_percent","ctb"),borrowAvailable:num("available","shares_available","shares","available_shares"),borrowRebate:num("rebate","rebate_percent","rebate_pct"),borrowUpdated:x.timestamp??x.date??x.updated_at??null};
-        }
-      }
-      return await parsePage();
-    }catch{return {}}
-  }
-
   async function shortData(symbol){
     if(!massiveKey) return {};
     try{
@@ -227,9 +195,9 @@ exports.handler = async (event) => {
         if(rebound)score+=10;
         if(resistance>last.c*1.15)score+=5;
         if(last.v>=500000)score+=5;
-        const [sd,ctb]=await Promise.all([Promise.resolve({}),borrowFee(symbol)]);
+        const sd={};
         const splitDays=sd.splitDate?Math.max(0,Math.floor((Date.now()-new Date(sd.splitDate).getTime())/86400000)):null;
-        return {symbol,name:sd.companyName||symbol,country:"US",price:last.c,change:bars.length>1?((last.c-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,volume:last.v,gap:bars.length>1&&bars[bars.length-2].c?((last.o-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,support,resistance,distance,pivotSupport:support,pivotResistance:resistance,stableBase,rsi:rr,rvol:rv,ema20:e20,ema30:e30,ema50:e50,macd:mm,stability,stabilityNeed:4,score:Math.min(100,Math.round(score)),supportOK:supportHold,rebound,macdOK:macdImproving,macdTrend:mm!=null?(macdImproving?"يتحسن":"يتراجع"):"—",emaOK:emaRecovery,emaRecovery,volumeImproving,emaState:(last.c>e20?"فوق":"دون")+" 20 / "+(last.c>e30?"فوق":"دون")+" 30 / "+(last.c>e50?"فوق":"دون")+" 50",room:resistance>last.c*1.15,afterHours:null,highAfterSplit:sd.splitDate?Math.max(...bars.filter(z=>new Date(z.date)>=new Date(sd.splitDate)).map(z=>z.h),last.h):null,...sd,...ctb,splitDays};
+        return {symbol,name:sd.companyName||symbol,country:"US",price:last.c,change:bars.length>1?((last.c-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,volume:last.v,gap:bars.length>1&&bars[bars.length-2].c?((last.o-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,support,resistance,distance,pivotSupport:support,pivotResistance:resistance,stableBase,rsi:rr,rvol:rv,ema20:e20,ema30:e30,ema50:e50,macd:mm,stability,stabilityNeed:4,score:Math.min(100,Math.round(score)),supportOK:supportHold,rebound,macdOK:macdImproving,macdTrend:mm!=null?(macdImproving?"يتحسن":"يتراجع"):"—",emaOK:emaRecovery,emaRecovery,volumeImproving,emaState:(last.c>e20?"فوق":"دون")+" 20 / "+(last.c>e30?"فوق":"دون")+" 30 / "+(last.c>e50?"فوق":"دون")+" 50",room:resistance>last.c*1.15,afterHours:null,highAfterSplit:sd.splitDate?Math.max(...bars.filter(z=>new Date(z.date)>=new Date(sd.splitDate)).map(z=>z.h),last.h):null,...sd,splitDays};
       }catch(e){errors.push(symbol+":"+e.message);return null}
     }));
     results.push(...got.filter(Boolean));
