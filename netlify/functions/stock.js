@@ -156,23 +156,48 @@ exports.handler = async (event) => {
         if(bars.length<35) throw new Error("بيانات تاريخية غير كافية");
         const close=bars.map(x=>x.c), vol=bars.map(x=>x.v), last=bars[bars.length-1];
         const e20=ema(close,20),e30=ema(close,30),e50=ema(close,50),e20p=ema(close.slice(0,-1),20),e30p=ema(close.slice(0,-1),30),e50p=ema(close.slice(0,-1),50),rr=rsi(close),mm=macd(close),mmp=macd(close.slice(0,-1));
-        const win=bars.slice(-60),support=Math.min(...win.map(x=>x.l)),resistance=Math.max(...win.map(x=>x.h));
+        const win=bars.slice(-80);
+        const pivotLows=[],pivotHighs=[];
+        for(let i=2;i<win.length-2;i++){
+          const b=win[i];
+          if(b.l<=win[i-1].l&&b.l<=win[i-2].l&&b.l<=win[i+1].l&&b.l<=win[i+2].l) pivotLows.push({i,low:b.l});
+          if(b.h>=win[i-1].h&&b.h>=win[i-2].h&&b.h>=win[i+1].h&&b.h>=win[i+2].h) pivotHighs.push({i,high:b.h});
+        }
+        const below=pivotLows.filter(x=>x.low<=last.c).sort((a,b)=>b.low-a.low);
+        const above=pivotHighs.filter(x=>x.high>=last.c).sort((a,b)=>a.high-b.high);
+        const support=(below[0]?.low??Math.min(...win.map(x=>x.l)));
+        const resistance=(above[0]?.high??Math.max(...win.map(x=>x.h)));
         const av=vol.slice(-21,-1).reduce((s,x)=>s+x,0)/Math.max(1,vol.slice(-21,-1).length);
         const rv=av?last.v/av:null, distance=support?((last.c-support)/support)*100:999;
-        let stability=0;const stableBase=Math.min(...bars.slice(-5).map(x=>x.l));for(let k=bars.length-1;k>=Math.max(0,bars.length-5);k--){if(bars[k].l>=stableBase*0.97)stability++;else break}
+        let stability=0,stableBase=null;
+        for(let p=bars.length-3;p>=2;p--){
+          const b=bars[p];
+          const isPivot=b.l<=bars[p-1].l&&b.l<=bars[p-2].l&&b.l<=bars[p+1].l&&b.l<=bars[p+2].l;
+          const hadDrop=bars[p-2].c>bars[p-1].c&&bars[p-1].c>b.c;
+          if(!isPivot||!hadDrop) continue;
+          let count=1;
+          for(let j=p+1;j<bars.length;j++){
+            if(bars[j].l<b.l){count=0;break}
+            count++;
+          }
+          if(count>0){stability=count;stableBase=b.l;break}
+        }
+        if(!stability){stability=1;stableBase=last.l}
         const prev=bars[Math.max(0,bars.length-2)], rebound=last.c>last.o&&last.c>prev.c, macdImproving=mm!=null&&mmp!=null&&mm>mmp, emaRecovery=(e20!=null&&e30!=null&&e50!=null&&e20p!=null&&e30p!=null&&e50p!=null)&&e20>e20p&&e30>e30p&&e50>e50p, volumeImproving=last.v>prev.v&&rv>=1.2, nearSupport=distance<=20, supportHold=last.c>support&&last.l<=support*1.05;
+        // 100-point pivot score.
         let score=0;
-        if(nearSupport)score+=15;else if(distance<=30)score+=8;
-        if(macdImproving)score+=12;
-        if(emaRecovery)score+=12;
-        if(volumeImproving)score+=10;
-        if(stability>=4)score+=10;else if(stability>=2)score+=5;
-        if(supportHold)score+=8;
-        if(rebound)score+=8;
+        if(nearSupport)score+=20;else if(distance<=30)score+=12;
+        if(supportHold)score+=10;
+        if(macdImproving)score+=15;
+        if(emaRecovery)score+=15;
+        if(volumeImproving)score+=10;else if(rv>=1)score+=5;
+        if(stability>=4)score+=10;else if(stability>=3)score+=7;else if(stability>=2)score+=4;
+        if(rebound)score+=10;
+        if(resistance>last.c*1.15)score+=5;
         if(last.v>=500000)score+=5;
         const sd={};
         const splitDays=sd.splitDate?Math.max(0,Math.floor((Date.now()-new Date(sd.splitDate).getTime())/86400000)):null;
-        return {symbol,name:sd.companyName||symbol,country:"US",price:last.c,change:bars.length>1?((last.c-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,volume:last.v,gap:bars.length>1&&bars[bars.length-2].c?((last.o-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,support,resistance,distance,rsi:rr,rvol:rv,ema20:e20,ema30:e30,ema50:e50,macd:mm,stability,stabilityNeed:4,score:Math.min(100,Math.round(score)),supportOK:supportHold,rebound,macdOK:macdImproving,macdTrend:mm!=null?(macdImproving?"يتحسن":"يتراجع"):"—",emaOK:emaRecovery,emaRecovery,volumeImproving,emaState:(last.c>e20?"فوق":"دون")+" 20 / "+(last.c>e30?"فوق":"دون")+" 30 / "+(last.c>e50?"فوق":"دون")+" 50",room:resistance>last.c*1.15,afterHours:null,highAfterSplit:sd.splitDate?Math.max(...bars.filter(z=>new Date(z.date)>=new Date(sd.splitDate)).map(z=>z.h),last.h):null,...sd,splitDays};
+        return {symbol,name:sd.companyName||symbol,country:"US",price:last.c,change:bars.length>1?((last.c-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,volume:last.v,gap:bars.length>1&&bars[bars.length-2].c?((last.o-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,support,resistance,distance,pivotSupport:support,pivotResistance:resistance,stableBase,rsi:rr,rvol:rv,ema20:e20,ema30:e30,ema50:e50,macd:mm,stability,stabilityNeed:4,score:Math.min(100,Math.round(score)),supportOK:supportHold,rebound,macdOK:macdImproving,macdTrend:mm!=null?(macdImproving?"يتحسن":"يتراجع"):"—",emaOK:emaRecovery,emaRecovery,volumeImproving,emaState:(last.c>e20?"فوق":"دون")+" 20 / "+(last.c>e30?"فوق":"دون")+" 30 / "+(last.c>e50?"فوق":"دون")+" 50",room:resistance>last.c*1.15,afterHours:null,highAfterSplit:sd.splitDate?Math.max(...bars.filter(z=>new Date(z.date)>=new Date(sd.splitDate)).map(z=>z.h),last.h):null,...sd,splitDays};
       }catch(e){errors.push(symbol+":"+e.message);return null}
     }));
     results.push(...got.filter(Boolean));
