@@ -158,9 +158,7 @@ exports.handler = async (event) => {
         let stability=0;for(let k=bars.length-1;k>=0;k--){if(bars[k].l>=support*0.97)stability++;else break}
         const prev=bars[Math.max(0,bars.length-2)], rebound=last.c>last.o&&last.c>prev.c, macdImproving=mm!=null&&mmp!=null&&mm>mmp, emaRecovery=(e20!=null&&e30!=null&&e50!=null)&&((e20p!=null&&e20>e20p)||(e30p!=null&&e30>e30p)||(e50p!=null&&e50>e50p))&&(last.c>=e20||last.c>=e30||last.c>=e50), volumeImproving=last.v>prev.v&&rv>=1.2, nearSupport=distance<=20, supportHold=last.c>support&&last.l<=support*1.05;
         let score=0;
-        if(rr>=23&&rr<=27)score+=20;else if(rr>=20&&rr<=35)score+=10;
         if(nearSupport)score+=15;else if(distance<=30)score+=8;
-        if(macdImproving)score+=12;
         if(emaRecovery)score+=12;
         if(volumeImproving)score+=10;
         if(stability>=4)score+=10;else if(stability>=2)score+=5;
