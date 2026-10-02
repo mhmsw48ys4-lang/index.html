@@ -53,10 +53,10 @@ button,input,select{font:inherit}.app{max-width:820px;margin:auto;padding:14px 1
 
   <div class="filterpanel" id="filterPanel">
     <div class="fields">
-      <div class="field"><label>نطاق السعر</label><select id="priceRange"><option value="1-7">1 - 7 دولار</option><option value="1-5">1 - 5 دولار</option><option value="1-10">1 - 10 دولار</option></select></div>
-      <div class="field"><label>الحد الأدنى للحجم</label><select id="minVol"><option value="500000">500K</option><option value="1000000">1M</option><option value="2000000">2M</option></select></div>
-      <div class="field"><label>RSI</label><select id="rsiRange"><option value="23-27">23 - 27</option><option value="23-35">23 - 35</option></select></div>
-      <div class="field"><label>RVOL الأدنى</label><select id="minRvol"><option value="1.2">1.2</option><option value="1.5">1.5</option><option value="2">2.0</option></select></div>
+      <div class="field"><label>نطاق السعر</label><select id="priceRange"><option value="1-10">1 - 10 دولار</option><option value="1-7">1 - 7 دولار</option><option value="1-5">1 - 5 دولار</option></select></div>
+      <div class="field"><label>الحد الأدنى للحجم</label><select id="minVol"><option value="100000">100K</option><option value="500000">500K</option><option value="1000000">1M</option><option value="2000000">2M</option></select></div>
+      <div class="field"><label>RSI</label><select id="rsiRange"><option value="20-40">20 - 40</option><option value="23-27">23 - 27</option><option value="23-35">23 - 35</option></select></div>
+      <div class="field"><label>RVOL الأدنى</label><select id="minRvol"><option value="0.8">0.8</option><option value="1.2">1.2</option><option value="1.5">1.5</option><option value="2">2.0</option></select></div>
       <div class="field"><label>ثبات</label><select id="stableDays"><option value="4">4 أيام</option><option value="3">3 أيام</option></select></div>
       <div class="field"><label>الأيام منذ التقسيم</label><select id="splitDays"><option value="all">الكل</option><option value="100">آخر 100 يوم</option></select></div>
     </div>
@@ -102,7 +102,7 @@ function render(){
  let a=state.data.filter(x=>!q||x.symbol.includes(q)||(x.name||"").toUpperCase().includes(q));
  const [lo,hi]=$("priceRange").value.split("-").map(Number), [rlo,rhi]=$("rsiRange").value.split("-").map(Number);
  const mv=Number($("minVol").value), mr=Number($("minRvol").value), sd=$("splitDays").value;
- a=a.filter(x=>x.price>=lo&&x.price<=hi&&x.volume>=mv&&x.rsi>=rlo&&x.rsi<=rhi&&x.rvol>=mr&&(!x.stabilityNeed||x.stability>=0));
+ a=a.filter(x=>Number.isFinite(x.price)&&x.price>=lo&&x.price<=hi&&Number(x.volume||0)>=mv&&Number(x.rsi||0)>=rlo&&Number(x.rsi||0)<=rhi&&Number(x.rvol||0)>=mr);
  if(sd!=="all") a=a.filter(x=>x.splitDays==null||x.splitDays<=Number(sd));
  const s=$("sort").value;
  a.sort((x,y)=>s==="rvol"?y.rvol-x.rvol:s==="short"?y.shortRatio-x.shortRatio:y.score-x.score);
@@ -110,7 +110,7 @@ function render(){
  $("ready").textContent=a.filter(x=>x.score>=90).length;
  $("near").textContent=a.filter(x=>x.score>=70&&x.score<90).length;
  $("watch").textContent=a.filter(x=>x.score<70).length;
- $("results").innerHTML=a.length?a.map(card).join(""):`<div class="card empty">لا توجد نتائج مطابقة للشروط الحالية</div>`;
+ $("results").innerHTML=a.length?a.map(card).join(""):`<div class="card empty">لا توجد نتائج بهذه الفلاتر. افتح «الفلاتر» ووسّع الشروط لعرض الأسهم التي تم جلبها.</div>`;
 }
 async function load(){
  $("results").innerHTML=`<div class="card empty loading">جاري المسح وجلب البيانات…</div>`;
