@@ -22,7 +22,7 @@ exports.handler = async (event) => {
     const u = new URL("https://www.alphavantage.co/query");
     Object.entries({...params,apikey:alphaKey}).forEach(([k,v])=>u.searchParams.set(k,v));
     const r=await fetch(u), j=await r.json();
-    if(j["Error Message"]||j["Note"]) throw new Error(j["Error Message"]||"Alpha Vantage limit");
+    if(j["Error Message"]||j["Note"]||j["Information"]) throw new Error(j["Error Message"]||j["Note"]||j["Information"]);
     return j;
   };
 
@@ -58,7 +58,7 @@ exports.handler = async (event) => {
       const raw=Object.entries(j?.["Time Series (60min)"]||{}).map(([date,v])=>({date:new Date(date).toISOString(),o:+v["1. open"],h:+v["2. high"],l:+v["3. low"],c:+v["4. close"],v:+v["5. volume"]})).sort((a,b)=>a.date.localeCompare(b.date));
       const r=[];for(let i=0;i<raw.length;i+=4){const g=raw.slice(i,i+4);if(g.length===4)r.push({date:g[3].date,o:g[0].o,h:Math.max(...g.map(x=>x.h)),l:Math.min(...g.map(x=>x.l)),c:g[3].c,v:g.reduce((s,x)=>s+x.v,0)})}return r;
     }
-    const j=await alpha({function:"TIME_SERIES_DAILY_ADJUSTED",symbol,outputsize:"full"});
+    const j=await alpha({function:"TIME_SERIES_DAILY",symbol,outputsize:"full"});
     const ts=j?.["Time Series (Daily)"]||j?.["Time Series (Daily Adjusted)"]||{};
     return Object.entries(ts).map(([date,v])=>({date:new Date(date).toISOString(),o:+v["1. open"],h:+v["2. high"],l:+v["3. low"],c:+(v["5. adjusted close"]||v["4. close"]),v:+(v["6. volume"]||v["5. volume"])})).sort((a,b)=>a.date.localeCompare(b.date));
   }
