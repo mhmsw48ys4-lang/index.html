@@ -93,6 +93,8 @@ function card(x,i){
    <div class="metric"><label>RVOL</label><b>${fmt(x.rvol,2)}</b></div>
    <div class="metric"><label>التقسيم</label><b>${x.splitDate?esc(x.splitDays+" يوم"):"—"}</b></div>
    <div class="metric"><label>الثبات</label><b>${x.stability||0}/${x.stabilityNeed||4}</b></div>
+   <div class="metric"><label>CTB الاقتراض</label><b>${x.borrowFee==null?"—":fmt(x.borrowFee,2)+"%"}</b></div>
+   <div class="metric"><label>المتاح للاقتراض</label><b>${x.borrowAvailable==null?"—":vol(x.borrowAvailable)}</b></div>
   </div>
   <div class="more"><span class="fresh">${esc(x.shortDate||x.updated||"")}</span><button onclick="showDetail('${esc(x.symbol)}')">عرض التفاصيل</button></div>
  </article>`
@@ -134,6 +136,8 @@ function showDetail(symbol){
   <div class="ditem"><label>السعر بعد الإغلاق</label><b>$${fmt(x.afterHours,2)}</b></div><div class="ditem"><label>الدعم المعتمد</label><b>$${fmt(x.support,2)}</b></div>
   <div class="ditem"><label>المقاومة</label><b>$${fmt(x.resistance,2)}</b></div><div class="ditem"><label>المسافة عن الدعم</label><b>${fmt(x.distance,1)}%</b></div>
   <div class="ditem"><label>الفلوت</label><b>${vol(x.float)}</b></div><div class="ditem"><label>القيمة السوقية</label><b>${vol(x.marketCap)}</b></div>
+  <div class="ditem"><label>رسوم الاقتراض (CTB)</label><b>${x.borrowFee==null?"غير متاح":fmt(x.borrowFee,2)+"%"}</b></div><div class="ditem"><label>الأسهم المتاحة للاقتراض</label><b>${x.borrowAvailable==null?"غير متاح":vol(x.borrowAvailable)}</b></div>
+  <div class="ditem"><label>Rebate</label><b>${x.borrowRebate==null?"غير متاح":fmt(x.borrowRebate,2)+"%"}</b></div><div class="ditem"><label>آخر تحديث CTB</label><b>${esc(x.borrowUpdated||"غير متاح")}</b></div>
   <div class="ditem"><label>Gap</label><b>${x.gap==null?"غير متاح":fmt(x.gap,2)+"%"}</b></div>
   <div class="ditem"><label>التقسيم</label><b>${x.splitDate?esc(x.splitDate):"لا يوجد"}</b></div><div class="ditem"><label>أيام منذ التقسيم</label><b>${x.splitDays==null?"—":x.splitDays}</b></div>
   <div class="ditem"><label>أعلى سعر بعد التقسيم</label><b>$${fmt(x.highAfterSplit,2)}</b></div><div class="ditem"><label>نوع التقسيم</label><b>${x.splitFrom&&x.splitTo?esc(x.splitFrom+":"+x.splitTo):"غير متاح"}</b></div>
@@ -149,7 +153,7 @@ function showDetail(symbol){
    ["تحسن الحجم / RVOL",x.volumeImproving?fmt(x.rvol,2):fmt(x.rvol,2)+" — ضعيف",x.volumeImproving],
    ["الثبات",`${x.stability||0}/${x.stabilityNeed||4} أيام`,(x.stability||0)>=(x.stabilityNeed||4)],
    ["المساحة والهدف",x.room?"موجودة":"غير مؤكدة",x.room],
-   ["ضغط البيع / سحب السيولة","غير متاح من مصدر البيانات الحالي",null],
+   ["رسوم الاقتراض CTB",x.borrowFee==null?"غير متاح":fmt(x.borrowFee,2)+"%",x.borrowFee!=null],
    ["التقسيم",x.splitDate?`${x.splitDays} يوم`:"—",x.splitDate?true:null]
   ].map(s=>`<div class="step"><span>${esc(s[0])}</span><b class="${s[2]===true?"okc":s[2]===false?"warnc":"mutedc"}">${esc(s[1])} ${s[2]===true?"✓":s[2]===false?"•":""}</b></div>`).join("")}
  </div>`;
@@ -164,4 +168,4 @@ load();
 </script>
 </body>
 </html>
-<!-- Netlify redeploy trigger: 2026-10-02 -->
+<!-- Netlify redeploy trigger: 2026-10-02 CTB -->
