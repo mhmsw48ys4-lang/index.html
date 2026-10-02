@@ -59,9 +59,9 @@ button,input,select{font:inherit}.app{max-width:820px;margin:auto;padding:14px 1
       <div class="field"><label>RVOL الأدنى</label><select id="minRvol"><option value="1.2">1.2</option><option value="0.8">0.8</option><option value="1.5">1.5</option><option value="2">2.0</option></select></div>
       <div class="field"><label>ثبات</label><select id="stableDays"><option value="4">4 أيام</option><option value="3">3 أيام</option><option value="2">2 يوم</option><option value="0">بدون شرط</option></select></div>
       <div class="field"><label>البعد عن الدعم</label><select id="maxDistance"><option value="20">≤ 20%</option><option value="30">≤ 30%</option><option value="50">≤ 50%</option><option value="999">بدون شرط</option></select></div>
-      <div class="field"><label>MACD</label><select id="macdFilter"><option value="improving">يتحسن فقط</option><option value="any">الكل</option></select></div>
-      <div class="field"><label>المتوسطات 20/30/50</label><select id="emaFilter"><option value="recover">تعافي 20/30/50</option><option value="any">الكل</option></select></div>
-      <div class="field"><label>شمعة الارتداد</label><select id="reboundFilter"><option value="yes">مطلوبة</option><option value="any">الكل</option></select></div><div class="field"><label>تحسن الحجم</label><select id="volumeFilter"><option value="yes">مطلوب</option><option value="any">الكل</option></select></div><div class="field"><label>المساحة والهدف</label><select id="roomFilter"><option value="yes">مطلوبة</option><option value="any">الكل</option></select></div><div class="field"><label>نسبة الشورت اليومية</label><select id="minShortRatio"><option value="0">الكل</option><option value="10">≥ 10%</option><option value="20">≥ 20%</option><option value="30">≥ 30%</option></select></div>
+      <div class="field"><label>MACD</label><select id="macdFilter"><option value="improving">يتحسن</option><option value="any">الكل</option></select></div>
+      <div class="field"><label>المتوسطات 20/30/50</label><select id="emaFilter"><option value="recover">تعافي</option><option value="any">الكل</option></select></div>
+      <div class="field"><label>نسبة الشورت اليومية</label><select id="minShortRatio"><option value="0">الكل</option><option value="10">≥ 10%</option><option value="20">≥ 20%</option><option value="30">≥ 30%</option></select></div>
       <div class="field"><label>الأيام منذ التقسيم</label><select id="splitDays"><option value="all">الكل</option><option value="100">آخر 100 يوم</option><option value="50">آخر 50 يوم</option><option value="30">آخر 30 يوم</option></select></div>
     </div>
   </div>
@@ -106,8 +106,8 @@ function render(){
  let a=state.data.filter(x=>!q||x.symbol.includes(q)||(x.name||"").toUpperCase().includes(q));
  const [lo,hi]=$("priceRange").value.split("-").map(Number), [rlo,rhi]=$("rsiRange").value.split("-").map(Number);
  const mv=Number($("minVol").value), mr=Number($("minRvol").value), sd=$("splitDays").value;
- const stable=Number($("stableDays").value), maxDist=Number($("maxDistance").value), macdF=$("macdFilter").value, emaF=$("emaFilter").value, reboundF=$("reboundFilter").value, volumeF=$("volumeFilter").value, roomF=$("roomFilter").value, minShort=Number($("minShortRatio").value);
- a=a.filter(x=>Number.isFinite(x.price)&&x.price>=lo&&x.price<=hi&&Number(x.volume||0)>=mv&&Number(x.rsi||0)>=rlo&&Number(x.rsi||0)<=rhi&&Number(x.rvol||0)>=mr&&Number(x.distance??999)<=maxDist&&(stable===0||Number(x.stability||0)>=stable)&&(macdF==="any"||x.macdOK===true)&&(emaF==="any"||x.emaOK===true)&&(reboundF==="any"||x.rebound===true)&&x.supportOK===true&&(volumeF==="any"||x.volumeImproving===true)&&(roomF==="any"||x.room===true)&&(Number(x.shortRatio||0)*100)>=minShort);
+ const stable=Number($("stableDays").value), maxDist=Number($("maxDistance").value), macdF=$("macdFilter").value, emaF=$("emaFilter").value, minShort=Number($("minShortRatio").value);
+ a=a.filter(x=>Number.isFinite(x.price)&&x.price>=lo&&x.price<=hi&&Number(x.volume||0)>=mv&&Number(x.rsi||0)>=rlo&&Number(x.rsi||0)<=rhi&&Number(x.rvol||0)>=mr&&Number(x.distance??999)<=maxDist&&(stable===0||Number(x.stability||0)>=stable)&&(macdF==="any"||x.macdOK===true)&&(emaF==="any"||x.emaOK===true)&&x.rebound===true&&x.supportOK===true&&x.volumeImproving===true&&x.room===true&&(Number(x.shortRatio||0)*100)>=minShort);
  if(sd!=="all") a=a.filter(x=>x.splitDays!=null&&x.splitDays<=Number(sd));
  const s=$("sort").value;
  a.sort((x,y)=>s==="rvol"?y.rvol-x.rvol:s==="short"?y.shortRatio-x.shortRatio:y.score-x.score);
@@ -164,7 +164,7 @@ function showDetail(symbol){
 $("tabs").addEventListener("click",e=>{const b=e.target.closest(".tab");if(!b)return;document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));b.classList.add("active");state.tf=b.dataset.tf;load()});
 $("filterBtn").onclick=()=>$("filterPanel").classList.toggle("open");
 $("refresh").onclick=load;$("search").oninput=render;$("sort").onchange=render;
-["priceRange","minVol","rsiRange","minRvol","stableDays","maxDistance","macdFilter","emaFilter","reboundFilter","volumeFilter","roomFilter","minShortRatio","splitDays"].forEach(id=>$(id).onchange=render);
+["priceRange","minVol","rsiRange","minRvol","stableDays","maxDistance","macdFilter","emaFilter","minShortRatio","splitDays"].forEach(id=>$(id).onchange=render);
 $("settings").onclick=()=>$("filterPanel").classList.add("open");
 load();
 </script>
