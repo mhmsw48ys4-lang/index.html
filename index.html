@@ -117,7 +117,7 @@ function render(){
  $("watch").textContent=a.filter(x=>x.score<70).length;
  $("results").innerHTML=a.length?a.map(card).join(""):`<div class="card empty">لا توجد نتائج بهذه الفلاتر. افتح «الفلاتر» ووسّع الشروط لعرض الأسهم التي تم جلبها.</div>`;
 }
-async async function load(){
+async function load(){
  $("results").innerHTML=`<div class="card empty loading">جاري المسح وجلب البيانات…</div>`;
  try{
    const r=await fetch(`/.netlify/functions/stock?tf=${encodeURIComponent(state.tf)}`);
