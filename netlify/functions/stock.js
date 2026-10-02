@@ -100,18 +100,23 @@ exports.handler = async (event) => {
       }catch{}
     }
     try{
-      const u=new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
-      u.searchParams.set("scrIds","most_actives");
-      u.searchParams.set("count","250");
-      const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
-      if(r.ok){
+      const ids=["most_actives","day_gainers","day_losers"];
+      const all=new Map();
+      for(const scrIds of ids){
+        const u=new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
+        u.searchParams.set("scrIds",scrIds);
+        u.searchParams.set("count","250");
+        const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
+        if(!r.ok) continue;
         const j=await r.json();
         const rows=j?.finance?.result?.[0]?.quotes||[];
-        const picked=rows.map(x=>({symbol:x.symbol,price:x.regularMarketPrice,volume:x.regularMarketVolume}))
-          .filter(x=>x.symbol&&x.price>=1&&x.price<=10&&x.volume>=100000)
-          .sort((a,b)=>(b.volume||0)-(a.volume||0)).slice(0,100).map(x=>x.symbol);
-        if(picked.length) return picked;
+        for(const x of rows){
+          const p=Number(x.regularMarketPrice), v=Number(x.regularMarketVolume||0);
+          if(x.symbol&&p>=1&&p<=10&&v>=100000) all.set(x.symbol,{symbol:x.symbol,price:p,volume:v});
+        }
       }
+      const picked=[...all.values()].sort((a,b)=>(b.volume||0)-(a.volume||0)).slice(0,150).map(x=>x.symbol);
+      if(picked.length) return picked;
     }catch{}
     return fallbackSymbols;
   }
