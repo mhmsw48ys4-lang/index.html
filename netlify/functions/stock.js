@@ -108,8 +108,8 @@ exports.handler = async (event) => {
         const j=await r.json();
         const rows=j?.finance?.result?.[0]?.quotes||[];
         const picked=rows.map(x=>({symbol:x.symbol,price:x.regularMarketPrice,volume:x.regularMarketVolume}))
-          .filter(x=>x.symbol&&x.price>=1&&x.price<=7&&x.volume>=100000)
-          .sort((a,b)=>(b.volume||0)-(a.volume||0)).slice(0,30).map(x=>x.symbol);
+          .filter(x=>x.symbol&&x.price>=1&&x.price<=10&&x.volume>=100000)
+          .sort((a,b)=>(b.volume||0)-(a.volume||0)).slice(0,100).map(x=>x.symbol);
         if(picked.length) return picked;
       }
     }catch{}
@@ -155,17 +155,17 @@ exports.handler = async (event) => {
         const win=bars.slice(-60),support=Math.min(...win.map(x=>x.l)),resistance=Math.max(...win.map(x=>x.h));
         const av=vol.slice(-21,-1).reduce((s,x)=>s+x,0)/Math.max(1,vol.slice(-21,-1).length);
         const rv=av?last.v/av:null, distance=support?((last.c-support)/support)*100:999;
-        let stability=0;for(let k=bars.length-1;k>=0;k--){if(bars[k].l>=support*0.97)stability++;else break}
-        const prev=bars[Math.max(0,bars.length-2)], rebound=last.c>last.o&&last.c>prev.c, macdImproving=mm!=null&&mmp!=null&&mm>mmp, emaRecovery=(e20!=null&&e30!=null&&e50!=null)&&((e20p!=null&&e20>e20p)||(e30p!=null&&e30>e30p)||(e50p!=null&&e50>e50p))&&(last.c>=e20||last.c>=e30||last.c>=e50), volumeImproving=last.v>prev.v&&rv>=1.2, nearSupport=distance<=20, supportHold=last.c>support&&last.l<=support*1.05;
+        let stability=0;const stableBase=Math.min(...bars.slice(-5).map(x=>x.l));for(let k=bars.length-1;k>=Math.max(0,bars.length-5);k--){if(bars[k].l>=stableBase*0.97)stability++;else break}
+        const prev=bars[Math.max(0,bars.length-2)], rebound=last.c>last.o&&last.c>prev.c, macdImproving=mm!=null&&mmp!=null&&mm>mmp, emaRecovery=(e20!=null&&e30!=null&&e50!=null&&e20p!=null&&e30p!=null&&e50p!=null)&&e20>e20p&&e30>e30p&&e50>e50p, volumeImproving=last.v>prev.v&&rv>=1.2, nearSupport=distance<=20, supportHold=last.c>support&&last.l<=support*1.05;
         let score=0;
         if(nearSupport)score+=15;else if(distance<=30)score+=8;
-        if(emaRecovery)score+=12;
+        if(macdImproving)score+=12;\n        if(emaRecovery)score+=12;
         if(volumeImproving)score+=10;
         if(stability>=4)score+=10;else if(stability>=2)score+=5;
         if(supportHold)score+=8;
         if(rebound)score+=8;
         if(last.v>=500000)score+=5;
-        const sd=await shortData(symbol);
+        const sd={};
         const splitDays=sd.splitDate?Math.max(0,Math.floor((Date.now()-new Date(sd.splitDate).getTime())/86400000)):null;
         return {symbol,name:sd.companyName||symbol,country:"US",price:last.c,change:bars.length>1?((last.c-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,volume:last.v,gap:bars.length>1&&bars[bars.length-2].c?((last.o-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,support,resistance,distance,rsi:rr,rvol:rv,ema20:e20,ema30:e30,ema50:e50,macd:mm,stability,stabilityNeed:4,score:Math.min(100,Math.round(score)),supportOK:supportHold,rebound,macdOK:macdImproving,macdTrend:mm!=null?(macdImproving?"يتحسن":"يتراجع"):"—",emaOK:emaRecovery,emaRecovery,volumeImproving,emaState:(last.c>e20?"فوق":"دون")+" 20 / "+(last.c>e30?"فوق":"دون")+" 30 / "+(last.c>e50?"فوق":"دون")+" 50",room:resistance>last.c*1.15,afterHours:null,highAfterSplit:sd.splitDate?Math.max(...bars.filter(z=>new Date(z.date)>=new Date(sd.splitDate)).map(z=>z.h),last.h):null,...sd,splitDays};
       }catch(e){errors.push(symbol+":"+e.message);return null}
