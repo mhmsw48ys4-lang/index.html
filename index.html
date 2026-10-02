@@ -158,7 +158,7 @@ function showDetail(symbol){
 $("tabs").addEventListener("click",e=>{const b=e.target.closest(".tab");if(!b)return;document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));b.classList.add("active");state.tf=b.dataset.tf;load()});
 $("filterBtn").onclick=()=>$("filterPanel").classList.toggle("open");
 $("refresh").onclick=load;$("search").oninput=render;$("sort").onchange=render;
-["priceRange","minVol","rsiRange","minRvol","stableDays","maxDistance","macdFilter","emaFilter","minShortRatio" ,"splitDays"].forEach(id=>$(id).onchange=render);
+["priceRange","minVol","rsiRange","minRvol","stableDays","maxDistance","macdFilter","emaFilter","splitDays"].forEach(id=>$(id).onchange=render);
 $("settings").onclick=()=>$("filterPanel").classList.add("open");
 load();
 </script>
