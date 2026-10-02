@@ -117,7 +117,7 @@ function render(){
  $("watch").textContent=a.filter(x=>x.score<70).length;
  $("results").innerHTML=a.length?a.map(card).join(""):`<div class="card empty">لا توجد نتائج بهذه الفلاتر. افتح «الفلاتر» ووسّع الشروط لعرض الأسهم التي تم جلبها.</div>`;
 }
-async function load(){
+async async function load(){
  $("results").innerHTML=`<div class="card empty loading">جاري المسح وجلب البيانات…</div>`;
  try{
    const r=await fetch(`/.netlify/functions/stock?tf=${encodeURIComponent(state.tf)}`);
@@ -155,7 +155,8 @@ function showDetail(symbol){
    ["تعافي المتوسطات 20/30/50",x.emaState||"—",x.emaOK],
    ["تحسن الحجم / RVOL",x.volumeImproving?fmt(x.rvol,2):fmt(x.rvol,2)+" — ضعيف",x.volumeImproving],
    ["الثبات",`${x.stability||0}/${x.stabilityNeed||4} أيام`,(x.stability||0)>=(x.stabilityNeed||4)],
-   ["المساحة والهدف",x.room?"موجودة":"غير مؤكدة",x.room],\n   ["ضغط البيع / سحب السيولة","غير متاح من مصدر البيانات الحالي",null],
+   ["المساحة والهدف",x.room?"موجودة":"غير مؤكدة",x.room],
+   ["ضغط البيع / سحب السيولة","غير متاح من مصدر البيانات الحالي",null],
    ["التقسيم",x.splitDate?`${x.splitDays} يوم`:"—",x.splitDate?true:null]
   ].map(s=>`<div class="step"><span>${esc(s[0])}</span><b class="${s[2]===true?"okc":s[2]===false?"warnc":"mutedc"}">${esc(s[1])} ${s[2]===true?"✓":s[2]===false?"•":""}</b></div>`).join("")}
  </div>`;
