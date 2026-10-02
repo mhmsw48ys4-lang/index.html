@@ -95,9 +95,24 @@ exports.handler = async (event) => {
       try{
         const j=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
         const rows=(j?.tickers||[]).map(x=>({symbol:x.ticker,price:x.day?.c??x.lastTrade?.p??null,volume:x.day?.v??0}));
-        return rows.filter(x=>x.symbol&&x.price>=0.5&&x.price<=15&&x.volume>=100000).sort((a,b)=>b.volume-a.volume).slice(0,24).map(x=>x.symbol);
+        const picked=rows.filter(x=>x.symbol&&x.price>=0.5&&x.price<=15&&x.volume>=100000).sort((a,b)=>b.volume-a.volume).slice(0,40).map(x=>x.symbol);
+        if(picked.length) return picked;
       }catch{}
     }
+    try{
+      const u=new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
+      u.searchParams.set("scrIds","most_actives");
+      u.searchParams.set("count","250");
+      const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
+      if(r.ok){
+        const j=await r.json();
+        const rows=j?.finance?.result?.[0]?.quotes||[];
+        const picked=rows.map(x=>({symbol:x.symbol,price:x.regularMarketPrice,volume:x.regularMarketVolume}))
+          .filter(x=>x.symbol&&x.price>=1&&x.price<=7&&x.volume>=100000)
+          .sort((a,b)=>(b.volume||0)-(a.volume||0)).slice(0,30).map(x=>x.symbol);
+        if(picked.length) return picked;
+      }
+    }catch{}
     return fallbackSymbols;
   }
 

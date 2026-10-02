@@ -59,8 +59,8 @@ button,input,select{font:inherit}.app{max-width:820px;margin:auto;padding:14px 1
       <div class="field"><label>RVOL الأدنى</label><select id="minRvol"><option value="1.2">1.2</option><option value="0.8">0.8</option><option value="1.5">1.5</option><option value="2">2.0</option></select></div>
       <div class="field"><label>ثبات</label><select id="stableDays"><option value="4">4 أيام</option><option value="3">3 أيام</option><option value="2">2 يوم</option><option value="0">بدون شرط</option></select></div>
       <div class="field"><label>البعد عن الدعم</label><select id="maxDistance"><option value="20">≤ 20%</option><option value="30">≤ 30%</option><option value="50">≤ 50%</option><option value="999">بدون شرط</option></select></div>
-      <div class="field"><label>MACD</label><select id="macdFilter"><option value="improving">يتحسن</option><option value="any">الكل</option></select></div>
-      <div class="field"><label>المتوسطات 20/30/50</label><select id="emaFilter"><option value="recover">تعافي</option><option value="any">الكل</option></select></div>
+      <div class="field"><label>MACD</label><select id="macdFilter"><option value="positive">يتحسن فقط</option><option value="any">الكل</option></select></div>
+      <div class="field"><label>المتوسطات 20/30/50</label><select id="emaFilter"><option value="above">تعافي 20/30/50</option><option value="any">الكل</option></select></div>
       <div class="field"><label>نسبة الشورت اليومية</label><select id="minShortRatio"><option value="0">الكل</option><option value="10">≥ 10%</option><option value="20">≥ 20%</option><option value="30">≥ 30%</option></select></div>
       <div class="field"><label>الأيام منذ التقسيم</label><select id="splitDays"><option value="all">الكل</option><option value="100">آخر 100 يوم</option><option value="50">آخر 50 يوم</option><option value="30">آخر 30 يوم</option></select></div>
     </div>
@@ -155,8 +155,7 @@ function showDetail(symbol){
    ["تعافي المتوسطات 20/30/50",x.emaState||"—",x.emaOK],
    ["تحسن الحجم / RVOL",x.volumeImproving?fmt(x.rvol,2):fmt(x.rvol,2)+" — ضعيف",x.volumeImproving],
    ["الثبات",`${x.stability||0}/${x.stabilityNeed||4} أيام`,(x.stability||0)>=(x.stabilityNeed||4)],
-   ["المساحة والهدف",x.room?"موجودة":"غير مؤكدة",x.room],
-   ["ضغط البيع / سحب السيولة","غير متاح من مصدر البيانات الحالي",null],
+   ["المساحة والهدف",x.room?"موجودة":"غير مؤكدة",x.room],\n   ["ضغط البيع / سحب السيولة","غير متاح من مصدر البيانات الحالي",null],
    ["التقسيم",x.splitDate?`${x.splitDays} يوم`:"—",x.splitDate?true:null]
   ].map(s=>`<div class="step"><span>${esc(s[0])}</span><b class="${s[2]===true?"okc":s[2]===false?"warnc":"mutedc"}">${esc(s[1])} ${s[2]===true?"✓":s[2]===false?"•":""}</b></div>`).join("")}
  </div>`;
@@ -171,4 +170,4 @@ load();
 </script>
 </body>
 </html>
-<!-- Pivot strategy UI v2: RSI 23-27, support, rebound, MACD improving, EMA recovery, volume improving, 4-day stability, room -->
+<!-- Netlify redeploy trigger: 2026-10-02 -->
