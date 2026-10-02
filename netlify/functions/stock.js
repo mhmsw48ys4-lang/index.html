@@ -136,24 +136,25 @@ exports.handler = async (event) => {
         const bars=massiveKey?await getBarsMassive(symbol):await yahoo(symbol);
         if(bars.length<35) throw new Error("بيانات تاريخية غير كافية");
         const close=bars.map(x=>x.c), vol=bars.map(x=>x.v), last=bars[bars.length-1];
-        const e20=ema(close,20),e30=ema(close,30),e50=ema(close,50),rr=rsi(close),mm=macd(close);
+        const e20=ema(close,20),e30=ema(close,30),e50=ema(close,50),e20p=ema(close.slice(0,-1),20),e30p=ema(close.slice(0,-1),30),e50p=ema(close.slice(0,-1),50),rr=rsi(close),mm=macd(close),mmp=macd(close.slice(0,-1));
         const win=bars.slice(-60),support=Math.min(...win.map(x=>x.l)),resistance=Math.max(...win.map(x=>x.h));
         const av=vol.slice(-21,-1).reduce((s,x)=>s+x,0)/Math.max(1,vol.slice(-21,-1).length);
         const rv=av?last.v/av:null, distance=support?((last.c-support)/support)*100:999;
         let stability=0;for(let k=bars.length-1;k>=0;k--){if(bars[k].l>=support*0.97)stability++;else break}
-        const rebound=last.c>last.o&&last.c>bars[Math.max(0,bars.length-2)].c;
+        const prev=bars[Math.max(0,bars.length-2)], rebound=last.c>last.o&&last.c>prev.c, macdImproving=mm!=null&&mmp!=null&&mm>mmp, emaRecovery=(e20!=null&&e30!=null&&e50!=null)&&((e20p!=null&&e20>e20p)||(e30p!=null&&e30>e30p)||(e50p!=null&&e50>e50p))&&(last.c>=e20||last.c>=e30||last.c>=e50), volumeImproving=last.v>prev.v&&rv>=1.2, nearSupport=distance<=20, supportHold=last.c>support&&last.l<=support*1.05;
         let score=0;
         if(rr>=23&&rr<=27)score+=20;else if(rr>=20&&rr<=35)score+=10;
-        if(distance<=20)score+=15;else if(distance<=30)score+=8;
-        if(mm!=null&&mm>=0)score+=10;
-        if(e20!=null&&last.c>e20)score+=8;if(e30!=null&&last.c>e30)score+=7;if(e50!=null&&last.c>e50)score+=7;
-        if(rv>=1.5)score+=10;else if(rv>=1.2)score+=5;
+        if(nearSupport)score+=15;else if(distance<=30)score+=8;
+        if(macdImproving)score+=12;
+        if(emaRecovery)score+=12;
+        if(volumeImproving)score+=10;
         if(stability>=4)score+=10;else if(stability>=2)score+=5;
+        if(supportHold)score+=8;
+        if(rebound)score+=8;
         if(last.v>=500000)score+=5;
-        if(rebound)score+=3;
         const sd=await shortData(symbol);
         const splitDays=sd.splitDate?Math.max(0,Math.floor((Date.now()-new Date(sd.splitDate).getTime())/86400000)):null;
-        return {symbol,name:sd.companyName||symbol,country:"US",price:last.c,change:bars.length>1?((last.c-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,volume:last.v,gap:bars.length>1&&bars[bars.length-2].c?((last.o-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,support,resistance,distance,rsi:rr,rvol:rv,ema20:e20,ema30:e30,ema50:e50,macd:mm,stability,stabilityNeed:4,score:Math.min(100,Math.round(score)),supportOK:true,rebound,macdOK:mm!=null&&mm>=0,macdTrend:mm!=null?(mm>=0?"إيجابي":"سلبي"):"—",emaOK:e20!=null&&e30!=null&&e50!=null&&last.c>e20&&last.c>e30&&last.c>e50,emaState:(last.c>e20?"فوق":"تحت")+" 20 / "+(last.c>e30?"فوق":"تحت")+" 30 / "+(last.c>e50?"فوق":"تحت")+" 50",room:resistance>last.c*1.15,afterHours:null,highAfterSplit:sd.splitDate?Math.max(...bars.filter(z=>new Date(z.date)>=new Date(sd.splitDate)).map(z=>z.h),last.h):null,...sd,splitDays};
+        return {symbol,name:sd.companyName||symbol,country:"US",price:last.c,change:bars.length>1?((last.c-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,volume:last.v,gap:bars.length>1&&bars[bars.length-2].c?((last.o-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,support,resistance,distance,rsi:rr,rvol:rv,ema20:e20,ema30:e30,ema50:e50,macd:mm,stability,stabilityNeed:4,score:Math.min(100,Math.round(score)),supportOK:supportHold,rebound,macdOK:macdImproving,macdTrend:mm!=null?(macdImproving?"يتحسن":"يتراجع"):"—",emaOK:emaRecovery,emaRecovery,volumeImproving,emaState:(last.c>e20?"فوق":"دون")+" 20 / "+(last.c>e30?"فوق":"دون")+" 30 / "+(last.c>e50?"فوق":"دون")+" 50",room:resistance>last.c*1.15,afterHours:null,highAfterSplit:sd.splitDate?Math.max(...bars.filter(z=>new Date(z.date)>=new Date(sd.splitDate)).map(z=>z.h),last.h):null,...sd,splitDays};
       }catch(e){errors.push(symbol+":"+e.message);return null}
     }));
     results.push(...got.filter(Boolean));
