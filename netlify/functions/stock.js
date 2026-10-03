@@ -106,7 +106,9 @@ exports.handler = async (event) => {
             try{
               const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(x.symbol),{});
               const z=rr?.results||{};
-              const mc=Number(z.market_cap), so=Number(z.share_class_shares_outstanding??z.weighted_shares_outstanding);
+              const so=Number(z.share_class_shares_outstanding??z.weighted_shares_outstanding);
+              const reportedMc=Number(z.market_cap);
+              const mc=Number.isFinite(reportedMc)&&reportedMc>0?reportedMc:(Number.isFinite(so)&&so>0&&Number.isFinite(x.price)&&x.price>0?so*x.price:null);
               return {symbol:x.symbol,marketCap:mc,sharesOutstanding:so};
             }catch{return {symbol:x.symbol,marketCap:null,sharesOutstanding:null};}
           }));
@@ -141,7 +143,7 @@ exports.handler = async (event) => {
     return fallbackSymbols;
   }
 
-  async function shortData(symbol){
+  async function shortData(symbol,currentPrice=null){
     if(!massiveKey) return {};
     try{
       const calls=await Promise.allSettled([
@@ -160,7 +162,7 @@ exports.handler = async (event) => {
         shortVolume, shortRatio, shortDate:a.date??a.trading_date??null,
         shortInterest:b.short_interest??null, daysToCover:b.days_to_cover??null,
         float:f.float??f.free_float??null,
-        marketCap:r.market_cap??null, sharesOutstanding:r.share_class_shares_outstanding??r.weighted_shares_outstanding??null,
+        marketCap:(r.market_cap??null)??((Number(r.share_class_shares_outstanding??r.weighted_shares_outstanding)>0&&Number(currentPrice)>0)?Number(r.share_class_shares_outstanding??r.weighted_shares_outstanding)*Number(currentPrice):null), sharesOutstanding:r.share_class_shares_outstanding??r.weighted_shares_outstanding??null,
         companyName:r.name??null,
         splitDate:sp?.execution_date??null, splitFrom:sp?.split_from??null, splitTo:sp?.split_to??null
       };
@@ -229,7 +231,7 @@ exports.handler = async (event) => {
         if(rebound)score+=10;
         if(resistance>last.c*1.15)score+=5;
         if(last.v>=500000)score+=5;
-        const sd=await shortData(symbol);
+        const sd=await shortData(symbol,last.c);
         if(!requestedSymbol && (sd.marketCap==null || sd.sharesOutstanding==null || Number(sd.marketCap)>10000000 || Number(sd.sharesOutstanding)>10000000)) return null;
         const profile=requestedSymbol?await profileData(symbol):{};
         const splitDays=sd.splitDate?Math.max(0,Math.floor((Date.now()-new Date(sd.splitDate).getTime())/86400000)):null;
