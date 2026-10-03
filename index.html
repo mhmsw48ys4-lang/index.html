@@ -103,9 +103,9 @@ function render(){
  let a=state.data.filter(x=>!q||x.symbol.includes(q)||(x.name||"").toUpperCase().includes(q));
  if(state.directSearch&&q) a=state.data.filter(x=>x.symbol===q);
  const [lo,hi]=$("priceRange").value.split("-").map(Number);
- const mv=Number($("minVol").value), mr=Number($("minRvol").value), sd=$("splitDays").value, rsiF=$("rsiRange").value;
+ const mv=Number($("minVol").value), mr=Number($("minRvol").value), sd=$("splitDays").value;
  const stable=Number($("stableDays").value), maxDist=Number($("maxDistance").value), macdF=$("macdFilter").value, emaF=$("emaFilter").value;
- a=a.filter(x=>Number.isFinite(x.price)&&x.price>=lo&&x.price<=hi&&Number(x.volume||0)>=mv&&Number(x.rvol||0)>=mr&& Number(x.rsi||0)>=rsiMin&&Number(x.rsi||0)<=rsiMax&&Number(x.distance??999)<=maxDist&&(stable===0||Number(x.stability||0)>=stable)&&(macdF==="any"||x.macdOK===true)&&(emaF==="any"||x.emaOK===true));
+ const rsiMin=Number($("rsiMin").value), rsiMax=Number($("rsiMax").value);\n a=a.filter(x=>Number.isFinite(x.price)&&x.price>=lo&&x.price<=hi&&Number(x.volume||0)>=mv&&Number(x.rvol||0)>=mr&&Number(x.rsi||0)>=rsiMin&&Number(x.rsi||0)<=rsiMax&&Number(x.distance??999)<=maxDist&&(stable===0||Number(x.stability||0)>=stable)&&(macdF==="any"||x.macdOK===true)&&(emaF==="any"||x.emaOK===true));
  if(sd!=="all") a=a.filter(x=>x.splitDays!=null&&x.splitDays<=Number(sd));
  const s=$("sort").value;
  a.sort((x,y)=>s==="rvol"?y.rvol-x.rvol:y.score-x.score);
