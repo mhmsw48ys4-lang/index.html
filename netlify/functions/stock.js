@@ -96,7 +96,7 @@ exports.handler = async (event) => {
       try{
         const j=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
         const rows=(j?.tickers||[]).map(x=>({symbol:x.ticker,price:x.day?.c??x.lastTrade?.p??null,volume:x.day?.v??0,marketCap:x.marketCap??x.market_cap??null,sharesOutstanding:x.share_class_shares_outstanding??x.weighted_shares_outstanding??x.sharesOutstanding??null}));
-        const picked=rows.filter(x=>x.symbol&&x.price>=1&&x.price<=10&&x.volume>=100000&&x.marketCap!=null&&x.marketCap<=10000000&&x.sharesOutstanding!=null&&x.sharesOutstanding<=10000000).sort((a,b)=>b.volume-a.volume).slice(0,120).map(x=>x.symbol);
+        const picked=rows.filter(x=>x.symbol&&x.price>=1&&x.price<=10&&x.volume>=100000).sort((a,b)=>b.volume-a.volume).slice(0,300).map(x=>x.symbol);
         if(picked.length) return picked;
       }catch{}
     }
@@ -113,7 +113,7 @@ exports.handler = async (event) => {
         const rows=j?.finance?.result?.[0]?.quotes||[];
         for(const x of rows){
           const p=Number(x.regularMarketPrice), v=Number(x.regularMarketVolume||0);
-          const mc=Number(x.marketCap??x.market_cap??x.marketCapRaw??0); const so=Number(x.sharesOutstanding??x.share_class_shares_outstanding??x.weighted_shares_outstanding??0); if(x.symbol&&p>=1&&p<=10&&v>=100000&&mc>0&&mc<=10000000&&so>0&&so<=10000000) all.set(x.symbol,{symbol:x.symbol,price:p,volume:v,marketCap:mc,sharesOutstanding:so});
+          const mc=Number(x.marketCap??x.market_cap??x.marketCapRaw??0); const so=Number(x.sharesOutstanding??x.share_class_shares_outstanding??x.weighted_shares_outstanding??0); if(x.symbol&&p>=1&&p<=10&&v>=100000&&true) all.set(x.symbol,{symbol:x.symbol,price:p,volume:v,marketCap:mc,sharesOutstanding:so});
         }
       }
       const picked=[...all.values()].sort((a,b)=>(b.volume||0)-(a.volume||0)).slice(0,120).map(x=>x.symbol);
@@ -209,6 +209,7 @@ exports.handler = async (event) => {
         if(resistance>last.c*1.15)score+=5;
         if(last.v>=500000)score+=5;
         const sd=await shortData(symbol);
+        if(!requestedSymbol && (sd.marketCap==null || sd.sharesOutstanding==null || Number(sd.marketCap)>10000000 || Number(sd.sharesOutstanding)>10000000)) return null;
         const profile=requestedSymbol?await profileData(symbol):{};
         const splitDays=sd.splitDate?Math.max(0,Math.floor((Date.now()-new Date(sd.splitDate).getTime())/86400000)):null;
         return {symbol,name:profile.name||sd.companyName||symbol,hq:profile.hq||null,country:profile.country||"US",price:last.c,change:bars.length>1?((last.c-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,volume:last.v,gap:bars.length>1&&bars[bars.length-2].c?((last.o-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,support,resistance,distance,pivotSupport:support,pivotResistance:resistance,stableBase,rsi:rr,rvol:rv,ema20:e20,ema30:e30,ema50:e50,macd:mm,stability,stabilityNeed:4,score:Math.min(100,Math.round(score)),supportOK:supportHold,rebound,macdOK:macdImproving,macdTrend:mm!=null?(macdImproving?"يتحسن":"يتراجع"):"—",emaOK:emaRecovery,emaRecovery,volumeImproving,emaState:(last.c>e20?"فوق":"دون")+" 20 / "+(last.c>e30?"فوق":"دون")+" 30 / "+(last.c>e50?"فوق":"دون")+" 50",room:resistance>last.c*1.15,afterHours:null,highAfterSplit:sd.splitDate?Math.max(...bars.filter(z=>new Date(z.date)>=new Date(sd.splitDate)).map(z=>z.h),last.h):null,...sd,splitDays};
