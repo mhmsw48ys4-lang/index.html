@@ -125,13 +125,15 @@ exports.handler = async (event) => {
   async function shortData(symbol){
     if(!massiveKey) return {};
     try{
-      const [sv,si,fl,ref,splits]=await Promise.all([
+      const calls=await Promise.allSettled([
         massive("/stocks/v1/short-volume",{ticker:symbol,limit:1}),
         massive("/stocks/v1/short-interest",{ticker:symbol,limit:1}),
         massive("/stocks/vX/float",{ticker:symbol,limit:1}),
         massive("/v3/reference/tickers/"+encodeURIComponent(symbol),{}),
         massive("/v3/reference/splits",{ticker:symbol,limit:20,sort:"execution_date.desc"})
       ]);
+      const val=i=>calls[i]?.status==="fulfilled"?calls[i].value:null;
+      const sv=val(0),si=val(1),fl=val(2),ref=val(3),splits=val(4);
       const a=sv?.results?.[0]||{}, b=si?.results?.[0]||{}, f=fl?.results?.[0]||{}, r=ref?.results||{}, sp=splits?.results?.[0]||null;
       const shortVolume=a.short_volume??a.shortVolume??null,totalVolume=a.total_volume??a.totalVolume??null;
       const shortRatio=a.short_volume_ratio!=null?Number(a.short_volume_ratio)/100:(shortVolume&&totalVolume?shortVolume/totalVolume:null);
