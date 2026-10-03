@@ -145,6 +145,18 @@ exports.handler = async (event) => {
     }catch{return {}}
   }
 
+  async function profileData(symbol){
+    if(!alphaKey) return {};
+    try{
+      const j=await alpha({function:"OVERVIEW",symbol});
+      return {
+        hq:[j.Address,j.City,j.State,j.Country].filter(Boolean).join(", ")||null,
+        name:j.Name||null,
+        country:j.Country==="China"?"CN":"US"
+      };
+    }catch{return {}}
+  }
+
   const symbols=await universe();
 
   const results=[], errors=[];
@@ -195,9 +207,10 @@ exports.handler = async (event) => {
         if(rebound)score+=10;
         if(resistance>last.c*1.15)score+=5;
         if(last.v>=500000)score+=5;
-        const sd={};
+        const sd=await shortData(symbol);
+        const profile=await profileData(symbol);
         const splitDays=sd.splitDate?Math.max(0,Math.floor((Date.now()-new Date(sd.splitDate).getTime())/86400000)):null;
-        return {symbol,name:sd.companyName||symbol,country:"US",price:last.c,change:bars.length>1?((last.c-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,volume:last.v,gap:bars.length>1&&bars[bars.length-2].c?((last.o-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,support,resistance,distance,pivotSupport:support,pivotResistance:resistance,stableBase,rsi:rr,rvol:rv,ema20:e20,ema30:e30,ema50:e50,macd:mm,stability,stabilityNeed:4,score:Math.min(100,Math.round(score)),supportOK:supportHold,rebound,macdOK:macdImproving,macdTrend:mm!=null?(macdImproving?"يتحسن":"يتراجع"):"—",emaOK:emaRecovery,emaRecovery,volumeImproving,emaState:(last.c>e20?"فوق":"دون")+" 20 / "+(last.c>e30?"فوق":"دون")+" 30 / "+(last.c>e50?"فوق":"دون")+" 50",room:resistance>last.c*1.15,afterHours:null,highAfterSplit:sd.splitDate?Math.max(...bars.filter(z=>new Date(z.date)>=new Date(sd.splitDate)).map(z=>z.h),last.h):null,...sd,splitDays};
+        return {symbol,name:profile.name||sd.companyName||symbol,hq:profile.hq||null,country:profile.country||"US",price:last.c,change:bars.length>1?((last.c-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,volume:last.v,gap:bars.length>1&&bars[bars.length-2].c?((last.o-bars[bars.length-2].c)/bars[bars.length-2].c)*100:null,support,resistance,distance,pivotSupport:support,pivotResistance:resistance,stableBase,rsi:rr,rvol:rv,ema20:e20,ema30:e30,ema50:e50,macd:mm,stability,stabilityNeed:4,score:Math.min(100,Math.round(score)),supportOK:supportHold,rebound,macdOK:macdImproving,macdTrend:mm!=null?(macdImproving?"يتحسن":"يتراجع"):"—",emaOK:emaRecovery,emaRecovery,volumeImproving,emaState:(last.c>e20?"فوق":"دون")+" 20 / "+(last.c>e30?"فوق":"دون")+" 30 / "+(last.c>e50?"فوق":"دون")+" 50",room:resistance>last.c*1.15,afterHours:null,highAfterSplit:sd.splitDate?Math.max(...bars.filter(z=>new Date(z.date)>=new Date(sd.splitDate)).map(z=>z.h),last.h):null,...sd,splitDays};
       }catch(e){errors.push(symbol+":"+e.message);return null}
     }));
     results.push(...got.filter(Boolean));
