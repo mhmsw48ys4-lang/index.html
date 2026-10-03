@@ -56,7 +56,7 @@ button,input,select{font:inherit}.app{max-width:820px;margin:auto;padding:14px 1
     <div class="fields">
       <div class="field"><label>نطاق السعر</label><select id="priceRange"><option value="1-10">1 - 10 دولار</option><option value="1-7">1 - 7 دولار</option><option value="1-5">1 - 5 دولار</option></select></div>
       <div class="field"><label>الحد الأدنى للحجم</label><select id="minVol"><option value="1000000">1M</option><option value="100000">100K</option><option value="2000000">2M</option></select></div>
-      <div class="field"><label>RSI</label><select id="rsiRange"><option value="all">الكل</option><option value="23-27">23 - 27</option><option value="20-40">20 - 40</option><option value="23-35">23 - 35</option></select></div>
+      <div class="field"><label>RSI من</label><input id="rsiMin" type="number" min="0" max="100" value="0" placeholder="0"></div><div class="field"><label>RSI إلى</label><input id="rsiMax" type="number" min="0" max="100" value="35" placeholder="35"></div>
       <div class="field"><label>RVOL الأدنى</label><select id="minRvol"><option value="1.2">1.2</option><option value="0.8">0.8</option><option value="1.5">1.5</option><option value="2">2.0</option></select></div>
       <div class="field"><label>ثبات</label><select id="stableDays"><option value="0">بدون شرط</option><option value="4">4 أيام</option><option value="3">3 أيام</option><option value="2">2 يوم</option></select></div>
       <div class="field"><label>البعد عن الدعم</label><select id="maxDistance"><option value="999">بدون شرط</option><option value="20">≤ 20%</option><option value="30">≤ 30%</option><option value="50">≤ 50%</option></select></div>
@@ -105,7 +105,7 @@ function render(){
  const [lo,hi]=$("priceRange").value.split("-").map(Number);
  const mv=Number($("minVol").value), mr=Number($("minRvol").value), sd=$("splitDays").value, rsiF=$("rsiRange").value;
  const stable=Number($("stableDays").value), maxDist=Number($("maxDistance").value), macdF=$("macdFilter").value, emaF=$("emaFilter").value;
- a=a.filter(x=>Number.isFinite(x.price)&&x.price>=lo&&x.price<=hi&&Number(x.volume||0)>=mv&&Number(x.rvol||0)>=mr&& (rsiF==="all" || (Number(x.rsi||0)>=Number(rsiF.split("-")[0])&&Number(x.rsi||0)<=Number(rsiF.split("-")[1])))&&Number(x.distance??999)<=maxDist&&(stable===0||Number(x.stability||0)>=stable)&&(macdF==="any"||x.macdOK===true)&&(emaF==="any"||x.emaOK===true));
+ a=a.filter(x=>Number.isFinite(x.price)&&x.price>=lo&&x.price<=hi&&Number(x.volume||0)>=mv&&Number(x.rvol||0)>=mr&& Number(x.rsi||0)>=rsiMin&&Number(x.rsi||0)<=rsiMax&&Number(x.distance??999)<=maxDist&&(stable===0||Number(x.stability||0)>=stable)&&(macdF==="any"||x.macdOK===true)&&(emaF==="any"||x.emaOK===true));
  if(sd!=="all") a=a.filter(x=>x.splitDays!=null&&x.splitDays<=Number(sd));
  const s=$("sort").value;
  a.sort((x,y)=>s==="rvol"?y.rvol-x.rvol:y.score-x.score);
@@ -159,7 +159,7 @@ function showDetail(symbol){
 $("tabs").addEventListener("click",e=>{const b=e.target.closest(".tab");if(!b)return;document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));b.classList.add("active");state.tf=b.dataset.tf;load()});
 $("filterBtn").onclick=()=>$("filterPanel").classList.toggle("open");
 $("refresh").onclick=load;\nasync function searchSymbol(){\n const q=$("search").value.trim().toUpperCase().replace(/[^A-Z0-9.-]/g,"");\n if(!q)return;\n $("searchBtn").disabled=true;$("searchBtn").textContent="...";\n $("results").innerHTML="<div class=\"card empty loading\">جاري البحث عن "+esc(q)+"…</div>";\n try{\n  const r=await fetch("/.netlify/functions/stock?symbol="+encodeURIComponent(q)+"&tf="+encodeURIComponent(state.tf));\n  if(!r.ok)throw new Error("تعذر العثور على السهم");\n  const j=await r.json();\n  if(!j.stocks?.length)throw new Error("لم نجد بيانات للسهم "+q);\n  const found=j.stocks[0];\n  state.data=[found,...state.data.filter(x=>x.symbol!==found.symbol)];\n  state.directSearch=true;render();\n }catch(e){$("results").innerHTML="<div class=\"card empty\">⚠️ "+esc(e.message)+"</div>";}\n finally{$("searchBtn").disabled=false;$("searchBtn").textContent="بحث";}\n}\n$("searchBtn").onclick=searchSymbol;\n$("search").addEventListener("keydown",e=>{if(e.key==="Enter")searchSymbol()});$("search").oninput=()=>{state.directSearch=false;render()};$("sort").onchange=render;
-["priceRange","minVol","rsiRange","minRvol","stableDays","maxDistance","macdFilter","emaFilter","splitDays"].forEach(id=>$(id).onchange=render);
+["priceRange","minVol","rsiMin","rsiMax","minRvol","stableDays","maxDistance","macdFilter","emaFilter","splitDays"].forEach(id=>$(id).onchange=render);
 $("settings").onclick=()=>$("filterPanel").classList.add("open");
 load();
 </script>
