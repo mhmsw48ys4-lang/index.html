@@ -138,7 +138,7 @@ function showDetail(symbol){
  <div class="detailgrid">
   <div class="ditem"><label>السعر بعد الإغلاق</label><b>$${fmt(x.afterHours,2)}</b></div><div class="ditem"><label>الدعم المعتمد</label><b>$${fmt(x.support,2)}</b></div>
   <div class="ditem"><label>المقاومة</label><b>$${fmt(x.resistance,2)}</b></div><div class="ditem"><label>المسافة عن الدعم</label><b>${fmt(x.distance,1)}%</b></div>
-  <div class="ditem"><label>الفلوت</label><b>${vol(x.float)}</b></div><div class="ditem"><label>القيمة السوقية</label><b>${vol(x.marketCap)}</b></div>
+  <div class="ditem"><label>عدد الأسهم القائمة</label><b>${fmt(x.sharesOutstanding,0)}</b></div><div class="ditem"><label>الفلوت</label><b>${fmt(x.float,0)}</b></div><div class="ditem"><label>القيمة السوقية</label><b>${vol(x.marketCap)}</b></div>
   <div class="ditem"><label>Gap</label><b>${x.gap==null?"غير متاح":fmt(x.gap,2)+"%"}</b></div>
   <div class="ditem"><label>التقسيم</label><b>${x.splitDate?esc(x.splitDate):"لا يوجد"}</b></div><div class="ditem"><label>أيام منذ التقسيم</label><b>${x.splitDays==null?"—":x.splitDays}</b></div>
   <div class="ditem"><label>أعلى سعر بعد التقسيم</label><b>$${fmt(x.highAfterSplit,2)}</b></div><div class="ditem"><label>نوع التقسيم</label><b>${x.splitFrom&&x.splitTo?esc(x.splitFrom+":"+x.splitTo):"غير متاح"}</b></div>
