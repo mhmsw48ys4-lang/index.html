@@ -249,28 +249,40 @@ exports.handler = async (event) => {
     symbols=configured;
   } else if(massiveKey){
     try{
-      // لا نعتمد على Full Market Snapshot لأنه متاح في خطط Massive محددة.
-      // نستخدم Grouped Daily الذي يرجع جميع أسهم السوق في طلب واحد.
-      let grouped=null, usedDate=null;
-      for(let back=0;back<7 && !grouped;back++){
+      let grouped=null, usedDate=null, lastError=null;
+      // ابحث عن آخر يوم تداول فعلي، وليس فقط آخر 7 تواريخ تقويمية.
+      for(let back=0;back<14 && !grouped;back++){
         const d=new Date(Date.now()-back*86400000).toISOString().slice(0,10);
         try{
-          const j=await massive("/v2/aggs/grouped/locale/us/market/stocks/"+d,{adjusted:"true"});
-          if(j?.results?.length){grouped=j;usedDate=d;}
-        }catch{}
+          const j=await massive("/v2/aggs/grouped/locale/us/market/stocks/"+d,{
+            adjusted:"true",
+            include_otc:"true"
+          });
+          if(Array.isArray(j?.results) && j.results.length>0){
+            grouped=j;
+            usedDate=d;
+          }
+        }catch(e){ lastError=String(e.message||e); }
       }
-      const rows=(grouped?.results||[]).map(x=>({
-        symbol:String(x.T||"").toUpperCase(),
-        price:Number(x.c),volume:Number(x.v||0),open:Number(x.o),high:Number(x.h),low:Number(x.l)
-      })).filter(x=>/^[A-Z][A-Z0-9.\-]{0,7}$/.test(x.symbol));
-      diagnostics.snapshot=rows.length;
-      const pv=rows.filter(x=>x.price>=1&&x.price<=10&&x.volume>=100000).sort((a,b)=>b.volume-a.volume);
-      diagnostics.priceVolume=pv.length;
-      diagnostics.groupedDate=usedDate||null;
 
-      // نفحص أفضل المرشحين بالمرجع فقط، ثم نطبق:
-      // Market Cap <= $10M + Shares Outstanding <= 10M.
+      const rows=(grouped?.results||[]).map(x=>({
+        symbol:String(x.T||x.ticker||"").toUpperCase(),
+        price:Number(x.c),
+        volume:Number(x.v||0),
+        open:Number(x.o),high:Number(x.h),low:Number(x.l)
+      })).filter(x=>/^[A-Z][A-Z0-9.\-]{0,7}$/.test(x.symbol)&&Number.isFinite(x.price));
+
+      diagnostics.snapshot=rows.length;
+      diagnostics.groupedDate=usedDate||null;
+      if(!rows.length) throw new Error("Grouped Daily لم يرجع بيانات. آخر خطأ: "+(lastError||"غير معروف"));
+
+      const pv=rows
+        .filter(x=>x.price>=1&&x.price<=10&&x.volume>=100000)
+        .sort((a,b)=>b.volume-a.volume);
+      diagnostics.priceVolume=pv.length;
+
       const checked=[];
+      // لا نحتاج فحص كل 12 ألف سهم؛ نأخذ الأكثر نشاطاً ثم نتحقق من شروط المايكروكاب.
       for(let i=0;i<pv.length && checked.length<300;i+=25){
         const batch=pv.slice(i,i+25);
         const refs=await Promise.all(batch.map(async x=>{
@@ -282,14 +294,19 @@ exports.handler = async (event) => {
         }));
         checked.push(...refs);
       }
+
       diagnostics.referenceChecked=checked.length;
-      const micro=checked.filter(x=>x.marketCap>0&&x.marketCap<=10000000&&x.shares>0&&x.shares<=10000000);
+      const micro=checked.filter(x=>
+        Number.isFinite(x.marketCap)&&x.marketCap>0&&x.marketCap<=10000000&&
+        Number.isFinite(x.shares)&&x.shares>0&&x.shares<=10000000
+      );
       diagnostics.microcaps=micro.length;
       symbols=micro.sort((a,b)=>b.volume-a.volume).slice(0,80).map(x=>x.symbol);
     }catch(e){
       diagnostics.error=String(e.message||e);
     }
-  }  if(!symbols.length){
+  }
+  if(!symbols.length){
     return out(200,{stocks:[],errors:["لم يجد الفاحص أسهماً مطابقة بعد مرحلة السعر/الحجم/القيمة السوقية","تشخيص: "+JSON.stringify(diagnostics)],universeCount:0,source:"Massive",tf,diagnostics});
   }
 
