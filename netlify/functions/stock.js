@@ -293,6 +293,27 @@ exports.handler = async (event) => {
     }catch(e){
       diagnostics.error=String(e.message||e);
     }
+  } else {
+    try{
+      const all=new Map();
+      for(const scr of ["most_actives","day_gainers","day_losers"]){
+        const u=new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
+        u.searchParams.set("scrIds",scr); u.searchParams.set("count","250");
+        const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
+        if(!r.ok) continue;
+        const j=await r.json();
+        for(const x of j?.finance?.result?.[0]?.quotes||[]){
+          const symbol=String(x.symbol||"").toUpperCase();
+          const price=Number(x.regularMarketPrice), volume=Number(x.regularMarketVolume||0);
+          const shares=Number(x.sharesOutstanding||0), cap=Number(x.marketCap||0);
+          if(/^[A-Z][A-Z0-9.\\-]{0,7}$/.test(symbol)&&price>=1&&price<=10&&volume>=100000&&shares>0&&shares<=10000000&&cap>0&&cap<=10000000)
+            all.set(symbol,{symbol,price,volume,shares,marketCap:cap});
+        }
+      }
+      const rows=[...all.values()].sort((a,b)=>b.volume-a.volume);
+      diagnostics.snapshot=rows.length; diagnostics.priceVolume=rows.length; diagnostics.microcaps=rows.length;
+      symbols=rows.slice(0,80).map(x=>x.symbol);
+    }catch(e){ diagnostics.error="Yahoo fallback: "+String(e.message||e); }
   }
 
   if(!symbols.length){
