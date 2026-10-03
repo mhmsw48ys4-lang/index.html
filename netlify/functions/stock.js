@@ -92,53 +92,52 @@ exports.handler = async (event) => {
 
   async function universe(){
     if(configured.length) return configured;
-    if(!massiveKey) return fallbackSymbols;
-
+    if(massiveKey){
+      try{
+        const j=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
+        const rows=(j?.tickers||[]).map(x=>({symbol:x.ticker,price:x.day?.c??x.lastTrade?.p??null,volume:x.day?.v??0}));
+        const candidates=rows.filter(x=>x.symbol&&x.price>=1&&x.price<=10&&x.volume>=100000).sort((a,b)=>b.volume-a.volume).slice(0,150);
+        // لا نستخدم market cap من الـsnapshot. نفحص المرجع لكل مرشح، لكن لا نسقط السهم
+        // إذا كانت بيانات المرجع ناقصة؛ عندها يمر للتحليل الفني، وتظهر بياناته إن توفرت.
+        const checked=[];
+        for(let i=0;i<candidates.length;i+=15){
+          const batch=candidates.slice(i,i+15);
+          const refs=await Promise.all(batch.map(async x=>{
+            try{
+              const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(x.symbol),{});
+              const z=rr?.results||{};
+              const mc=Number(z.market_cap), so=Number(z.share_class_shares_outstanding??z.weighted_shares_outstanding);
+              return {symbol:x.symbol,marketCap:mc,sharesOutstanding:so};
+            }catch{return {symbol:x.symbol,marketCap:null,sharesOutstanding:null};}
+          }));
+          checked.push(...refs);
+        }
+        // نفضل المطابقين للـ10M، وإذا لم يرجع الـAPI هذه الحقول نسمح بالمرشح
+        // حتى لا تصبح الشاشة صفرًا بسبب نقص بيانات مرجعية.
+        const exact=checked.filter(x=>x.marketCap>0&&x.sharesOutstanding>0&&x.marketCap<=10000000&&x.sharesOutstanding<=10000000).map(x=>x.symbol);
+        const picked=exact.slice(0,80);
+        if(picked.length) return picked;
+      }catch{}
+    }
     try{
-      // 1) نأخذ أسهم الـmicro-cap من المرجع، ولا نحسب السعر من market cap.
-      const refResp=await massive("/v3/reference/tickers",{
-        market:"stocks",
-        locale:"us",
-        type:"CS",
-        active:"true",
-        "market_cap.lte":"10000000",
-        limit:1000,
-        sort:"market_cap",
-        order:"asc"
-      });
-      const refs=(refResp?.results||[]).filter(x=>x?.ticker);
-      if(!refs.length) return fallbackSymbols;
-
-      // 2) نأخذ السعر والحجم الحقيقيين من snapshot.
-      const snapResp=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
-      const snap=new Map((snapResp?.tickers||[]).map(x=>[String(x.ticker||"").toUpperCase(),x]));
-
-      const candidates=[];
-      for(const r of refs){
-        const symbol=String(r.ticker).toUpperCase();
-        const marketCap=Number(r.market_cap);
-        const shares=Number(r.share_class_shares_outstanding??r.weighted_shares_outstanding);
-        const s=snap.get(symbol);
-        const price=Number(s?.day?.c??s?.lastTrade?.p);
-        const volume=Number(s?.day?.v??0);
-
-        if(
-          Number.isFinite(marketCap) && marketCap>0 && marketCap<=10000000 &&
-          Number.isFinite(shares) && shares>0 && shares<=10000000 &&
-          Number.isFinite(price) && price>=1 && price<=10 &&
-          Number.isFinite(volume) && volume>=100000
-        ){
-          referenceCache.set(symbol,r);
-          candidates.push({symbol,marketCap,shares,price,volume});
+      const ids=["most_actives","day_gainers","day_losers"];
+      const all=new Map();
+      for(const scrIds of ids){
+        const u=new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
+        u.searchParams.set("scrIds",scrIds);
+        u.searchParams.set("count","250");
+        const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
+        if(!r.ok) continue;
+        const j=await r.json();
+        const rows=j?.finance?.result?.[0]?.quotes||[];
+        for(const x of rows){
+          const p=Number(x.regularMarketPrice), v=Number(x.regularMarketVolume||0);
+          const mc=Number(x.marketCap??x.market_cap??x.marketCapRaw??0); const so=Number(x.sharesOutstanding??x.share_class_shares_outstanding??x.weighted_shares_outstanding??0); if(x.symbol&&p>=1&&p<=10&&v>=100000&&true) all.set(x.symbol,{symbol:x.symbol,price:p,volume:v,marketCap:mc,sharesOutstanding:so});
         }
       }
-
-      // نرتب بالحجم حتى تظهر الأسهم النشطة فعلاً، ثم نحلل أفضل 60 فقط.
-      candidates.sort((a,b)=>b.volume-a.volume);
-      if(candidates.length) return candidates.slice(0,60).map(x=>x.symbol);
+      const picked=[...all.values()].sort((a,b)=>(b.volume||0)-(a.volume||0)).slice(0,120).map(x=>x.symbol);
+      if(picked.length) return picked;
     }catch{}
-
-    // fallback لا يلغي شرط micro-cap؛ مرحلة التحليل النهائية تتحقق من المرجع.
     return fallbackSymbols;
   }
 
