@@ -13,16 +13,6 @@ exports.handler = async (event) => {
   };
   const out = (status, body) => ({ statusCode: status, headers, body: JSON.stringify(body) });
 
-  if (!massiveKey && !requested) {
-    return out(200, {
-      stocks: [],
-      errors: ["MASSIVE_API_KEY غير موجود في Netlify Environment Variables"],
-      universeCount: 0,
-      source: "none",
-      tf
-    });
-  }
-
   const massive = async (path, params = {}) => {
     if (!massiveKey) return null;
     const u = new URL("https://api.massive.com" + path);
