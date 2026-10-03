@@ -96,7 +96,7 @@ exports.handler = async (event) => {
       try{
         const j=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
         const rows=(j?.tickers||[]).map(x=>({symbol:x.ticker,price:x.day?.c??x.lastTrade?.p??null,volume:x.day?.v??0}));
-        const picked=rows.filter(x=>x.symbol&&x.price>=0.5&&x.price<=15&&x.volume>=100000).sort((a,b)=>b.volume-a.volume).slice(0,40).map(x=>x.symbol);
+        const picked=rows.filter(x=>x.symbol&&x.price>=0.5&&x.price<=15&&x.volume>=100000).sort((a,b)=>b.volume-a.volume).slice(0,120).map(x=>x.symbol);
         if(picked.length) return picked;
       }catch{}
     }
@@ -116,7 +116,7 @@ exports.handler = async (event) => {
           if(x.symbol&&p>=1&&p<=10&&v>=100000) all.set(x.symbol,{symbol:x.symbol,price:p,volume:v});
         }
       }
-      const picked=[...all.values()].sort((a,b)=>(b.volume||0)-(a.volume||0)).slice(0,150).map(x=>x.symbol);
+      const picked=[...all.values()].sort((a,b)=>(b.volume||0)-(a.volume||0)).slice(0,120).map(x=>x.symbol);
       if(picked.length) return picked;
     }catch{}
     return fallbackSymbols;
