@@ -95,8 +95,8 @@ exports.handler = async (event) => {
     if(massiveKey){
       try{
         const j=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
-        const rows=(j?.tickers||[]).map(x=>({symbol:x.ticker,price:x.day?.c??x.lastTrade?.p??null,volume:x.day?.v??0,marketCap:x.marketCap??x.market_cap??null}));
-        const picked=rows.filter(x=>x.symbol&&x.price>=1&&x.price<=10&&x.volume>=100000&&x.marketCap!=null&&x.marketCap<=7000000).sort((a,b)=>b.volume-a.volume).slice(0,120).map(x=>x.symbol);
+        const rows=(j?.tickers||[]).map(x=>({symbol:x.ticker,price:x.day?.c??x.lastTrade?.p??null,volume:x.day?.v??0,marketCap:x.marketCap??x.market_cap??null,sharesOutstanding:x.share_class_shares_outstanding??x.weighted_shares_outstanding??x.sharesOutstanding??null}));
+        const picked=rows.filter(x=>x.symbol&&x.price>=1&&x.price<=10&&x.volume>=100000&&x.marketCap!=null&&x.marketCap<=10000000&&x.sharesOutstanding!=null&&x.sharesOutstanding<=10000000).sort((a,b)=>b.volume-a.volume).slice(0,120).map(x=>x.symbol);
         if(picked.length) return picked;
       }catch{}
     }
@@ -113,7 +113,7 @@ exports.handler = async (event) => {
         const rows=j?.finance?.result?.[0]?.quotes||[];
         for(const x of rows){
           const p=Number(x.regularMarketPrice), v=Number(x.regularMarketVolume||0);
-          const mc=Number(x.marketCap??x.market_cap??x.marketCapRaw??0); if(x.symbol&&p>=1&&p<=10&&v>=100000&&mc>0&&mc<=7000000) all.set(x.symbol,{symbol:x.symbol,price:p,volume:v,marketCap:mc});
+          const mc=Number(x.marketCap??x.market_cap??x.marketCapRaw??0); const so=Number(x.sharesOutstanding??x.share_class_shares_outstanding??x.weighted_shares_outstanding??0); if(x.symbol&&p>=1&&p<=10&&v>=100000&&mc>0&&mc<=10000000&&so>0&&so<=10000000) all.set(x.symbol,{symbol:x.symbol,price:p,volume:v,marketCap:mc,sharesOutstanding:so});
         }
       }
       const picked=[...all.values()].sort((a,b)=>(b.volume||0)-(a.volume||0)).slice(0,120).map(x=>x.symbol);
