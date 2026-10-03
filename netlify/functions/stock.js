@@ -95,9 +95,22 @@ exports.handler = async (event) => {
     if(massiveKey){
       try{
         const j=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
-        const rows=(j?.tickers||[]).map(x=>({symbol:x.ticker,price:x.day?.c??x.lastTrade?.p??null,volume:x.day?.v??0,marketCap:x.marketCap??x.market_cap??null,sharesOutstanding:x.share_class_shares_outstanding??x.weighted_shares_outstanding??x.sharesOutstanding??null}));
-        const picked=rows.filter(x=>x.symbol&&x.price>=1&&x.price<=10&&x.volume>=100000).sort((a,b)=>b.volume-a.volume).slice(0,300).map(x=>x.symbol);
-        if(picked.length) return picked;
+        const rows=(j?.tickers||[]).map(x=>({symbol:x.ticker,price:x.day?.c??x.lastTrade?.p??null,volume:x.day?.v??0}));
+        const candidates=rows.filter(x=>x.symbol&&x.price>=1&&x.price<=10&&x.volume>=100000).sort((a,b)=>b.volume-a.volume).slice(0,500);
+        const eligible=[];
+        for(let i=0;i<candidates.length;i+=20){
+          const batch=candidates.slice(i,i+20);
+          const refs=await Promise.all(batch.map(async x=>{
+            try{
+              const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(x.symbol),{});
+              const z=rr?.results||{};
+              return z.market_cap!=null&&z.share_class_shares_outstanding!=null&&Number(z.market_cap)<=10000000&&Number(z.share_class_shares_outstanding)<=10000000?x.symbol:null;
+            }catch{return null}
+          }));
+          eligible.push(...refs.filter(Boolean));
+          if(eligible.length>=80) break;
+        }
+        if(eligible.length) return eligible.slice(0,80);
       }catch{}
     }
     try{
