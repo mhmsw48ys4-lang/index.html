@@ -92,36 +92,35 @@ exports.handler = async (event) => {
 
   async function universe(){
     if(configured.length) return configured;
-    if(massiveKey){
-      try{
-        const j=await massive("/v3/reference/tickers",{
-          market:"stocks",locale:"us",type:"CS",active:"true",
-          "market_cap.lte":"10000000",limit:300,sort:"ticker",order:"asc"
-        });
-        const candidates=(j?.results||[]).map(x=>x.ticker).filter(Boolean);
-        const eligible=[];
-        for(let i=0;i<candidates.length;i+=20){
-          const batch=candidates.slice(i,i+20);
-          const refs=await Promise.all(batch.map(async symbol=>{
-            try{
-              const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(symbol),{});
-              const z=rr?.results||{};
-              const mc=Number(z.market_cap);
-              const so=Number(z.share_class_shares_outstanding??z.weighted_shares_outstanding);
-              const price=so>0?mc/so:null;
-              if(Number.isFinite(mc)&&Number.isFinite(so)&&mc<=10000000&&so<=10000000&&Number.isFinite(price)&&price>=1&&price<=10){
-                referenceCache.set(symbol,z);
-                return symbol;
-              }
-            }catch{}
-            return null;
-          }));
-          eligible.push(...refs.filter(Boolean));
-          if(eligible.length>=60) break;
-        }
-        if(eligible.length) return eligible.slice(0,60);
-      }catch{}
-    }
+    if(!massiveKey) return fallbackSymbols;
+    try{
+      // نطلب أصغر الشركات بالقيمة السوقية بدل أول الرموز أبجدياً.
+      // لا نحسب السعر من marketCap/shares؛ السعر الحقيقي سيأتي من بيانات الشموع.
+      const j=await massive("/v3/reference/tickers",{
+        market:"stocks",locale:"us",type:"CS",active:"true",
+        "market_cap.lte":"10000000",limit:1000,sort:"market_cap",order:"asc"
+      });
+      const candidates=(j?.results||[]).map(x=>x.ticker).filter(Boolean);
+      const eligible=[];
+      for(let i=0;i<candidates.length&&eligible.length<60;i+=25){
+        const batch=candidates.slice(i,i+25);
+        const refs=await Promise.all(batch.map(async symbol=>{
+          try{
+            const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(symbol),{});
+            const z=rr?.results||{};
+            const mc=Number(z.market_cap);
+            const so=Number(z.share_class_shares_outstanding??z.weighted_shares_outstanding);
+            if(Number.isFinite(mc)&&Number.isFinite(so)&&mc<=10000000&&so<=10000000){
+              referenceCache.set(symbol,z);
+              return symbol;
+            }
+          }catch{}
+          return null;
+        }));
+        eligible.push(...refs.filter(Boolean));
+      }
+      if(eligible.length) return eligible.slice(0,60);
+    }catch{}
     return fallbackSymbols;
   }
 
