@@ -1,6 +1,7 @@
 exports.handler = async (event) => {
   const q = event.queryStringParameters || {};
   const tf = q.tf || "1d";
+  const requestedSymbol = (q.symbol || "").trim().toUpperCase().replace(/[^A-Z0-9.\-]/g,"");
   const massiveKey = process.env.MASSIVE_API_KEY;
   const alphaKey = process.env.ALPHA_VANTAGE_API_KEY;
   const configured = (process.env.SCAN_SYMBOLS || "").split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
@@ -157,7 +158,7 @@ exports.handler = async (event) => {
     }catch{return {}}
   }
 
-  const symbols=await universe();
+  const symbols=requestedSymbol?[requestedSymbol]:await universe();
 
   const results=[], errors=[];
   for(let i=0;i<symbols.length;i+=6){
@@ -216,5 +217,6 @@ exports.handler = async (event) => {
     results.push(...got.filter(Boolean));
   }
   results.sort((a,b)=>b.score-a.score);
+  if(requestedSymbol && !results.length){ return out(404,{stocks:[],updated:new Date().toLocaleString("ar-SA"),tf,source:massiveKey?"Massive":"Yahoo Finance",errors:errors.length?errors:[requestedSymbol+": لا توجد بيانات"],universeCount:1}); }
   return out(200,{stocks:results,updated:new Date().toLocaleString("ar-SA"),tf,source:massiveKey?"Massive":"Yahoo Finance",errors:errors.slice(0,10),universeCount:symbols.length});
 };
