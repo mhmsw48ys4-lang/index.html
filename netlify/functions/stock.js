@@ -96,21 +96,28 @@ exports.handler = async (event) => {
       try{
         const j=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
         const rows=(j?.tickers||[]).map(x=>({symbol:x.ticker,price:x.day?.c??x.lastTrade?.p??null,volume:x.day?.v??0}));
-        const candidates=rows.filter(x=>x.symbol&&x.price>=1&&x.price<=10&&x.volume>=100000).sort((a,b)=>b.volume-a.volume).slice(0,500);
-        const eligible=[];
-        for(let i=0;i<candidates.length;i+=20){
-          const batch=candidates.slice(i,i+20);
+        const candidates=rows.filter(x=>x.symbol&&x.price>=1&&x.price<=10&&x.volume>=100000).sort((a,b)=>b.volume-a.volume).slice(0,150);
+        // لا نستخدم market cap من الـsnapshot. نفحص المرجع لكل مرشح، لكن لا نسقط السهم
+        // إذا كانت بيانات المرجع ناقصة؛ عندها يمر للتحليل الفني، وتظهر بياناته إن توفرت.
+        const checked=[];
+        for(let i=0;i<candidates.length;i+=15){
+          const batch=candidates.slice(i,i+15);
           const refs=await Promise.all(batch.map(async x=>{
             try{
               const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(x.symbol),{});
               const z=rr?.results||{};
-              return z.market_cap!=null&&z.share_class_shares_outstanding!=null&&Number(z.market_cap)<=10000000&&Number(z.share_class_shares_outstanding)<=10000000?x.symbol:null;
-            }catch{return null}
+              const mc=Number(z.market_cap), so=Number(z.share_class_shares_outstanding??z.weighted_shares_outstanding);
+              return {symbol:x.symbol,marketCap:mc,sharesOutstanding:so};
+            }catch{return {symbol:x.symbol,marketCap:null,sharesOutstanding:null};}
           }));
-          eligible.push(...refs.filter(Boolean));
-          if(eligible.length>=80) break;
+          checked.push(...refs);
         }
-        if(eligible.length) return eligible.slice(0,80);
+        // نفضل المطابقين للـ10M، وإذا لم يرجع الـAPI هذه الحقول نسمح بالمرشح
+        // حتى لا تصبح الشاشة صفرًا بسبب نقص بيانات مرجعية.
+        const exact=checked.filter(x=>x.marketCap>0&&x.sharesOutstanding>0&&x.marketCap<=10000000&&x.sharesOutstanding<=10000000).map(x=>x.symbol);
+        const unknown=checked.filter(x=>x.marketCap==null||x.sharesOutstanding==null).map(x=>x.symbol);
+        const picked=[...exact,...unknown].slice(0,80);
+        if(picked.length) return picked;
       }catch{}
     }
     try{
