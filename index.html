@@ -105,8 +105,11 @@ function render(){
  const [lo,hi]=$("priceRange").value.split("-").map(Number);
  const mv=Number($("minVol").value), mr=Number($("minRvol").value), sd=$("splitDays").value;
  const stable=Number($("stableDays").value), maxDist=Number($("maxDistance").value), macdF=$("macdFilter").value, emaF=$("emaFilter").value;
- const rsiMin=Number($("rsiMin").value), rsiMax=Number($("rsiMax").value);\n a=a.filter(x=>Number.isFinite(x.price)&&x.price>=lo&&x.price<=hi&&Number(x.volume||0)>=mv&&Number(x.rvol||0)>=mr&&Number(x.rsi||0)>=rsiMin&&Number(x.rsi||0)<=rsiMax&&Number(x.distance??999)<=maxDist&&(stable===0||Number(x.stability||0)>=stable)&&(macdF==="any"||x.macdOK===true)&&(emaF==="any"||x.emaOK===true));
- if(sd==="split") a=a.filter(x=>x.splitDate);\n if(sd==="nosplit") a=a.filter(x=>!x.splitDate);\n if(["100","50","30"].includes(sd)) a=a.filter(x=>x.splitDate&&x.splitDays!=null&&x.splitDays<=Number(sd));
+ const rsiMin=Number($("rsiMin").value), rsiMax=Number($("rsiMax").value);
+ a=a.filter(x=>Number.isFinite(x.price)&&x.price>=lo&&x.price<=hi&&Number(x.volume||0)>=mv&&Number(x.rvol||0)>=mr&&Number(x.rsi||0)>=rsiMin&&Number(x.rsi||0)<=rsiMax&&Number(x.distance??999)<=maxDist&&(stable===0||Number(x.stability||0)>=stable)&&(macdF==="any"||x.macdOK===true)&&(emaF==="any"||x.emaOK===true));
+ if(sd==="split") a=a.filter(x=>x.splitDate);
+ if(sd==="nosplit") a=a.filter(x=>!x.splitDate);
+ if(["100","50","30"].includes(sd)) a=a.filter(x=>x.splitDate&&x.splitDays!=null&&x.splitDays<=Number(sd));
  const s=$("sort").value;
  a.sort((x,y)=>s==="rvol"?y.rvol-x.rvol:y.score-x.score);
  $("count").textContent=a.length;
@@ -158,7 +161,25 @@ function showDetail(symbol){
 }
 $("tabs").addEventListener("click",e=>{const b=e.target.closest(".tab");if(!b)return;document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));b.classList.add("active");state.tf=b.dataset.tf;load()});
 $("filterBtn").onclick=()=>$("filterPanel").classList.toggle("open");
-$("refresh").onclick=load;\nasync function searchSymbol(){\n const q=$("search").value.trim().toUpperCase().replace(/[^A-Z0-9.-]/g,"");\n if(!q)return;\n $("searchBtn").disabled=true;$("searchBtn").textContent="...";\n $("results").innerHTML="<div class=\"card empty loading\">جاري البحث عن "+esc(q)+"…</div>";\n try{\n  const r=await fetch("/.netlify/functions/stock?symbol="+encodeURIComponent(q)+"&tf="+encodeURIComponent(state.tf));\n  if(!r.ok)throw new Error("تعذر العثور على السهم");\n  const j=await r.json();\n  if(!j.stocks?.length)throw new Error("لم نجد بيانات للسهم "+q);\n  const found=j.stocks[0];\n  state.data=[found,...state.data.filter(x=>x.symbol!==found.symbol)];\n  state.directSearch=true;render();\n }catch(e){$("results").innerHTML="<div class=\"card empty\">⚠️ "+esc(e.message)+"</div>";}\n finally{$("searchBtn").disabled=false;$("searchBtn").textContent="بحث";}\n}\n$("searchBtn").onclick=searchSymbol;\n$("search").addEventListener("keydown",e=>{if(e.key==="Enter")searchSymbol()});$("search").oninput=()=>{state.directSearch=false;render()};$("sort").onchange=render;
+$("refresh").onclick=load;
+async function searchSymbol(){
+ const q=$("search").value.trim().toUpperCase().replace(/[^A-Z0-9.-]/g,"");
+ if(!q)return;
+ $("searchBtn").disabled=true;$("searchBtn").textContent="...";
+ $("results").innerHTML="<div class=\"card empty loading\">جاري البحث عن "+esc(q)+"…</div>";
+ try{
+  const r=await fetch("/.netlify/functions/stock?symbol="+encodeURIComponent(q)+"&tf="+encodeURIComponent(state.tf));
+  if(!r.ok)throw new Error("تعذر العثور على السهم");
+  const j=await r.json();
+  if(!j.stocks?.length)throw new Error("لم نجد بيانات للسهم "+q);
+  const found=j.stocks[0];
+  state.data=[found,...state.data.filter(x=>x.symbol!==found.symbol)];
+  state.directSearch=true;render();
+ }catch(e){$("results").innerHTML="<div class=\"card empty\">⚠️ "+esc(e.message)+"</div>";}
+ finally{$("searchBtn").disabled=false;$("searchBtn").textContent="بحث";}
+}
+$("searchBtn").onclick=searchSymbol;
+$("search").addEventListener("keydown",e=>{if(e.key==="Enter")searchSymbol()});$("search").oninput=()=>{state.directSearch=false;render()};$("sort").onchange=render;
 ["priceRange","minVol","rsiMin","rsiMax","minRvol","stableDays","maxDistance","macdFilter","emaFilter","splitDays"].forEach(id=>$(id).onchange=render);
 $("settings").onclick=()=>$("filterPanel").classList.add("open");
 load();
