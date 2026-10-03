@@ -92,49 +92,78 @@ exports.handler = async (event) => {
 
   async function universe(){
     if(configured.length) return configured;
-    if(!massiveKey) return fallbackSymbols;
-    try{
-      // نطلب أصغر الشركات بالقيمة السوقية بدل أول الرموز أبجدياً.
-      // لا نحسب السعر من marketCap/shares؛ السعر الحقيقي سيأتي من بيانات الشموع.
-      const j=await massive("/v3/reference/tickers",{
-        market:"stocks",locale:"us",type:"CS",active:"true",
-        "market_cap.lte":"10000000",limit:1000,sort:"market_cap",order:"asc"
-      });
-      const candidates=(j?.results||[]).map(x=>x.ticker).filter(Boolean);
-      const eligible=[];
-      for(let i=0;i<candidates.length&&eligible.length<60;i+=25){
-        const batch=candidates.slice(i,i+25);
-        const refs=await Promise.all(batch.map(async symbol=>{
+
+    // Build candidates from the live snapshot, then validate the user's exact
+    // micro-cap rules from ticker reference data. Keep the candidate set small
+    // enough that one scan does not explode API usage.
+    if(massiveKey){
+      try{
+        const j=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
+        const rows=(j?.tickers||[])
+          .map(x=>({symbol:x.ticker,price:Number(x.day?.c??x.lastTrade?.p),volume:Number(x.day?.v??0)}))
+          .filter(x=>x.symbol&&Number.isFinite(x.price)&&x.price>=1&&x.price<=10&&x.volume>=100000)
+          .sort((a,b)=>b.volume-a.volume)
+          .slice(0,80);
+
+        const eligible=[];
+        for(const x of rows){
           try{
-            const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(symbol),{});
+            const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(x.symbol),{});
             const z=rr?.results||{};
             const mc=Number(z.market_cap);
             const so=Number(z.share_class_shares_outstanding??z.weighted_shares_outstanding);
             if(Number.isFinite(mc)&&Number.isFinite(so)&&mc<=10000000&&so<=10000000){
-              referenceCache.set(symbol,z);
-              return symbol;
+              eligible.push(x.symbol);
             }
+            if(eligible.length>=30) break;
           }catch{}
-          return null;
-        }));
-        eligible.push(...refs.filter(Boolean));
+        }
+        if(eligible.length) return eligible;
+      }catch{}
+    }
+
+    // Yahoo fallback. Only accept rows where both limits are explicitly known.
+    try{
+      const ids=["most_actives","day_gainers","day_losers"];
+      const all=new Map();
+      for(const scrIds of ids){
+        const u=new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
+        u.searchParams.set("scrIds",scrIds);
+        u.searchParams.set("count","250");
+        const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
+        if(!r.ok) continue;
+        const j=await r.json();
+        const rows=j?.finance?.result?.[0]?.quotes||[];
+        for(const x of rows){
+          const p=Number(x.regularMarketPrice), v=Number(x.regularMarketVolume||0);
+          const mc=Number(x.marketCap), so=Number(x.sharesOutstanding);
+          if(x.symbol&&p>=1&&p<=10&&v>=100000&&Number.isFinite(mc)&&Number.isFinite(so)&&mc<=10000000&&so<=10000000){
+            all.set(x.symbol,{volume:v});
+          }
+        }
       }
-      if(eligible.length) return eligible.slice(0,60);
+      const picked=[...all.entries()].sort((a,b)=>b[1].volume-a[1].volume).slice(0,30).map(x=>x[0]);
+      if(picked.length) return picked;
     }catch{}
+
+    // Keep the fallback list for direct usability; the final reference check
+    // below still enforces the 10M/10M rule.
     return fallbackSymbols;
   }
-
-  const referenceCache=new Map();
 
   async function shortData(symbol){
     if(!massiveKey) return {};
     try{
-      let ref=referenceCache.get(symbol)||{};
-      if(!Object.keys(ref).length){ const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(symbol),{}); ref=rr?.results||{}; }
-      const splitResp=await massive("/stocks/v1/splits",{ticker:symbol,limit:20,sort:"execution_date.desc"});
-      const sp=splitResp?.results?.[0]||null;
-      const r=ref;
-      const a={}, b={}, f={};
+      const calls=await Promise.allSettled([
+        massive("/stocks/v1/short-volume",{ticker:symbol,limit:1}),
+        massive("/stocks/v1/short-interest",{ticker:symbol,limit:1}),
+        massive("/stocks/vX/float",{ticker:symbol,limit:1}),
+        massive("/v3/reference/tickers/"+encodeURIComponent(symbol),{}),
+        massive("/v3/reference/splits",{ticker:symbol,limit:20,sort:"execution_date.desc"})
+      ]);
+      const val=i=>calls[i]?.status==="fulfilled"?calls[i].value:null;
+      const sv=val(0),si=val(1),fl=val(2),ref=val(3),splits=val(4);
+      const a=sv?.results?.[0]||{}, b=si?.results?.[0]||{}, f=fl?.results?.[0]||{}, r=ref?.results||{}, sp=splits?.results?.[0]||null;
       const shortVolume=a.short_volume??a.shortVolume??null,totalVolume=a.total_volume??a.totalVolume??null;
       const shortRatio=a.short_volume_ratio!=null?Number(a.short_volume_ratio)/100:(shortVolume&&totalVolume?shortVolume/totalVolume:null);
       return {
