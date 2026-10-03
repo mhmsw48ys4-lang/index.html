@@ -95,24 +95,31 @@ exports.handler = async (event) => {
     if(massiveKey){
       try{
         const j=await massive("/v3/reference/tickers",{
-          market:"stocks",
-          locale:"us",
-          type:"CS",
-          active:"true",
-          "market_cap.lte":"10000000",
-          limit:1000,
-          sort:"market_cap",
-          order:"asc"
+          market:"stocks",locale:"us",type:"CS",active:"true",
+          "market_cap.lte":"10000000",limit:300,sort:"ticker",order:"asc"
         });
-        const rows=(j?.results||[]).map(x=>{
-          const mc=Number(x.market_cap);
-          const so=Number(x.share_class_shares_outstanding??x.weighted_shares_outstanding);
-          const p=so>0?mc/so:null;
-          return {symbol:x.ticker,name:x.name,marketCap:mc,sharesOutstanding:so,price:p};
-        }).filter(x=>x.symbol&&Number.isFinite(x.marketCap)&&x.marketCap<=10000000&&Number.isFinite(x.sharesOutstanding)&&x.sharesOutstanding<=10000000&&Number.isFinite(x.price)&&x.price>=1&&x.price<=10);
-        rows.sort((a,b)=>a.marketCap-b.marketCap);
-        rows.slice(0,80).forEach(x=>referenceCache.set(x.symbol,x));
-        if(rows.length) return rows.slice(0,80).map(x=>x.symbol);
+        const candidates=(j?.results||[]).map(x=>x.ticker).filter(Boolean);
+        const eligible=[];
+        for(let i=0;i<candidates.length;i+=20){
+          const batch=candidates.slice(i,i+20);
+          const refs=await Promise.all(batch.map(async symbol=>{
+            try{
+              const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(symbol),{});
+              const z=rr?.results||{};
+              const mc=Number(z.market_cap);
+              const so=Number(z.share_class_shares_outstanding??z.weighted_shares_outstanding);
+              const price=so>0?mc/so:null;
+              if(Number.isFinite(mc)&&Number.isFinite(so)&&mc<=10000000&&so<=10000000&&Number.isFinite(price)&&price>=1&&price<=10){
+                referenceCache.set(symbol,z);
+                return symbol;
+              }
+            }catch{}
+            return null;
+          }));
+          eligible.push(...refs.filter(Boolean));
+          if(eligible.length>=60) break;
+        }
+        if(eligible.length) return eligible.slice(0,60);
       }catch{}
     }
     return fallbackSymbols;
