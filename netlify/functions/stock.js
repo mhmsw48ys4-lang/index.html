@@ -92,63 +92,29 @@ exports.handler = async (event) => {
 
   async function universe(){
     if(configured.length) return configured;
-
-    // Build candidates from the live snapshot, then validate the user's exact
-    // micro-cap rules from ticker reference data. Keep the candidate set small
-    // enough that one scan does not explode API usage.
     if(massiveKey){
       try{
-        const j=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
-        const rows=(j?.tickers||[])
-          .map(x=>({symbol:x.ticker,price:Number(x.day?.c??x.lastTrade?.p),volume:Number(x.day?.v??0)}))
-          .filter(x=>x.symbol&&Number.isFinite(x.price)&&x.price>=1&&x.price<=10&&x.volume>=100000)
-          .sort((a,b)=>b.volume-a.volume)
-          .slice(0,80);
-
-        const eligible=[];
-        for(const x of rows){
-          try{
-            const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(x.symbol),{});
-            const z=rr?.results||{};
-            const mc=Number(z.market_cap);
-            const so=Number(z.share_class_shares_outstanding??z.weighted_shares_outstanding);
-            if(Number.isFinite(mc)&&Number.isFinite(so)&&mc<=10000000&&so<=10000000){
-              referenceCache.set(x.symbol,z);
-              eligible.push(x.symbol);
-            }
-            if(eligible.length>=30) break;
-          }catch{}
-        }
-        if(eligible.length) return eligible;
+        const j=await massive("/v3/reference/tickers",{
+          market:"stocks",
+          locale:"us",
+          type:"CS",
+          active:"true",
+          "market_cap.lte":"10000000",
+          limit:1000,
+          sort:"market_cap",
+          order:"asc"
+        });
+        const rows=(j?.results||[]).map(x=>{
+          const mc=Number(x.market_cap);
+          const so=Number(x.share_class_shares_outstanding??x.weighted_shares_outstanding);
+          const p=so>0?mc/so:null;
+          return {symbol:x.ticker,name:x.name,marketCap:mc,sharesOutstanding:so,price:p};
+        }).filter(x=>x.symbol&&Number.isFinite(x.marketCap)&&x.marketCap<=10000000&&Number.isFinite(x.sharesOutstanding)&&x.sharesOutstanding<=10000000&&Number.isFinite(x.price)&&x.price>=1&&x.price<=10);
+        rows.sort((a,b)=>a.marketCap-b.marketCap);
+        rows.slice(0,80).forEach(x=>referenceCache.set(x.symbol,x));
+        if(rows.length) return rows.slice(0,80).map(x=>x.symbol);
       }catch{}
     }
-
-    // Yahoo fallback. Only accept rows where both limits are explicitly known.
-    try{
-      const ids=["most_actives","day_gainers","day_losers"];
-      const all=new Map();
-      for(const scrIds of ids){
-        const u=new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
-        u.searchParams.set("scrIds",scrIds);
-        u.searchParams.set("count","250");
-        const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
-        if(!r.ok) continue;
-        const j=await r.json();
-        const rows=j?.finance?.result?.[0]?.quotes||[];
-        for(const x of rows){
-          const p=Number(x.regularMarketPrice), v=Number(x.regularMarketVolume||0);
-          const mc=Number(x.marketCap), so=Number(x.sharesOutstanding);
-          if(x.symbol&&p>=1&&p<=10&&v>=100000&&Number.isFinite(mc)&&Number.isFinite(so)&&mc<=10000000&&so<=10000000){
-            all.set(x.symbol,{volume:v});
-          }
-        }
-      }
-      const picked=[...all.entries()].sort((a,b)=>b[1].volume-a[1].volume).slice(0,30).map(x=>x[0]);
-      if(picked.length) return picked;
-    }catch{}
-
-    // Keep the fallback list for direct usability; the final reference check
-    // below still enforces the 10M/10M rule.
     return fallbackSymbols;
   }
 
@@ -159,7 +125,7 @@ exports.handler = async (event) => {
     try{
       let ref=referenceCache.get(symbol)||{};
       if(!Object.keys(ref).length){ const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(symbol),{}); ref=rr?.results||{}; }
-      const splitResp=await massive("/v3/reference/splits",{ticker:symbol,limit:20,sort:"execution_date.desc"});
+      const splitResp=await massive("/stocks/v1/splits",{ticker:symbol,limit:20,sort:"execution_date.desc"});
       const sp=splitResp?.results?.[0]||null;
       const r=ref;
       const a={}, b={}, f={};
