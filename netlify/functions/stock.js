@@ -50,41 +50,89 @@ exports.handler = async (event) => {
     let days = 420, interval = "1d";
     if (tf === "1w") { days = 1500; interval = "1wk"; }
     if (tf === "4h") { days = 60; interval = "60m"; }
+
     const u = new URL("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol));
     u.searchParams.set("period1", String(end - days * 86400));
     u.searchParams.set("period2", String(end));
     u.searchParams.set("interval", interval);
     u.searchParams.set("events", "div,splits");
+    u.searchParams.set("includeAdjustedClose", "true");
+
     const r = await fetch(u, { headers: { "User-Agent": "Mozilla/5.0" } });
     if (!r.ok) throw new Error("Yahoo " + r.status);
     const j = await r.json();
     const z = j?.chart?.result?.[0];
-    if (!z) throw new Error("لا توجد بيانات سعر");
-    const ts = z.timestamp || [], a = z.indicators?.quote?.[0] || {};
+    if (!z) throw new Error(j?.chart?.error?.description || "لا توجد بيانات سعر");
+
+    const ts = z.timestamp || [];
+    const qv = z.indicators?.quote?.[0] || {};
     const raw = ts.map((t,i)=>({
-      date:new Date(t*1000).toISOString(), o:Number(a.open?.[i]), h:Number(a.high?.[i]),
-      l:Number(a.low?.[i]), c:Number(a.close?.[i]), v:Number(a.volume?.[i]||0)
+      date:new Date(t*1000).toISOString(),
+      o:Number(qv.open?.[i]), h:Number(qv.high?.[i]), l:Number(qv.low?.[i]),
+      c:Number(qv.close?.[i]), v:Number(qv.volume?.[i]||0)
     })).filter(x=>[x.o,x.h,x.l,x.c].every(Number.isFinite));
-    if (tf !== "4h") return raw.sort((a,b)=>a.date.localeCompare(b.date));
+
+    const ev=z.events?.splits||{};
+    const splitEvents=Object.values(ev).map(x=>({
+      date:new Date(Number(x.date)*1000).toISOString().slice(0,10),
+      split_from:Number(x.numerator),
+      split_to:Number(x.denominator),
+      splitRatio:x.splitRatio||null
+    })).filter(x=>Number.isFinite(x.split_from)&&Number.isFinite(x.split_to))
+      .sort((x,y)=>y.date.localeCompare(x.date));
+
+    if (tf !== "4h") {
+      const out=raw.sort((a,b)=>a.date.localeCompare(b.date));
+      out._splits=splitEvents;
+      return out;
+    }
+
     const r4=[];
     for(let i=0;i<raw.length;i+=4){
-      const g=raw.slice(i,i+4); if(g.length<4) continue;
-      r4.push({date:g[3].date,o:g[0].o,h:Math.max(...g.map(x=>x.h)),l:Math.min(...g.map(x=>x.l)),c:g[3].c,v:g.reduce((s,x)=>s+x.v,0)});
+      const g=raw.slice(i,i+4);
+      if(g.length<4) continue;
+      r4.push({
+        date:g[3].date,o:g[0].o,h:Math.max(...g.map(x=>x.h)),
+        l:Math.min(...g.map(x=>x.l)),c:g[3].c,v:g.reduce((sum,x)=>sum+x.v,0)
+      });
     }
+    r4._splits=splitEvents;
     return r4;
   };
 
+  const yahooQuotes = async symbols => {
+    const map=new Map();
+    for(let i=0;i<symbols.length;i+=100){
+      const batch=symbols.slice(i,i+100);
+      if(!batch.length) continue;
+      const u=new URL("https://query1.finance.yahoo.com/v7/finance/quote");
+      u.searchParams.set("symbols",batch.join(","));
+      u.searchParams.set("formatted","false");
+      u.searchParams.set("region","US");
+      u.searchParams.set("lang","en-US");
+      const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
+      if(!r.ok) throw new Error("Yahoo quote "+r.status);
+      const j=await r.json();
+      for(const x of (j?.quoteResponse?.result||[])) map.set(String(x.symbol||"").toUpperCase(),x);
+    }
+    return map;
+  };
+
   const getBars = async symbol => {
-    if (!massiveKey) return yahooBars(symbol);
-    let mult=1, span="day", days=420, limit=500;
-    if(tf==="1w"){span="week";days=1500;limit=500;}
-    if(tf==="4h"){mult=4;span="hour";days=120;limit=500;}
-    const j=await massive("/v2/aggs/ticker/"+encodeURIComponent(symbol)+"/range/"+mult+"/"+span+"/"+dateAgo(days)+"/"+dateAgo(0),{
-      adjusted:"true", sort:"asc", limit
-    });
-    const bars=normalize(j?.results);
-    if(bars.length>=35) return bars;
-    return yahooBars(symbol);
+    try {
+      return await yahooBars(symbol);
+    } catch (yErr) {
+      if (!massiveKey) throw yErr;
+      let mult=1,span="day",days=420,limit=500;
+      if(tf==="1w"){span="week";days=1500;}
+      if(tf==="4h"){mult=4;span="hour";days=120;}
+      const j=await massive("/v2/aggs/ticker/"+encodeURIComponent(symbol)+"/range/"+mult+"/"+span+"/"+dateAgo(days)+"/"+dateAgo(0),{
+        adjusted:"true",sort:"asc",limit
+      });
+      const bars=normalize(j?.results);
+      if(bars.length>=35) return bars;
+      throw yErr;
+    };
   };
 
   const ema = (a,p) => {
@@ -122,24 +170,23 @@ exports.handler = async (event) => {
     } catch { return []; }
   };
 
-  const getShort = async symbol => {
-    if(!massiveKey) return {};
-    const [sv,si,fl]=await Promise.allSettled([
-      massive("/stocks/v1/short-volume",{ticker:symbol,limit:1}),
-      massive("/stocks/v1/short-interest",{ticker:symbol,limit:1}),
-      massive("/stocks/vX/float",{ticker:symbol,limit:1})
-    ]);
-    const val=x=>x.status==="fulfilled"?x.value:null;
-    const a=val(sv)?.results?.[0]||{}, b=val(si)?.results?.[0]||{}, f=val(fl)?.results?.[0]||{};
-    const shortVolume=a.short_volume??a.shortVolume??null;
-    const totalVolume=a.total_volume??a.totalVolume??null;
+  const getShort = async (symbol, ref={}) => {
+    const shortVolume=null;
+    const totalVolume=null;
+    const shortRatio=ref.shortRatio!=null?Number(ref.shortRatio):null;
+    const shortInterest=ref.sharesShort!=null?Number(ref.sharesShort):null;
+    const float=ref.floatShares!=null?Number(ref.floatShares):null;
+    const pctFloat=ref.shortPercentOfFloat!=null?Number(ref.shortPercentOfFloat)*100:
+      (ref.sharesPercentSharesOut!=null?Number(ref.sharesPercentSharesOut)*100:null);
     return {
       shortVolume,
-      shortRatio:a.short_volume_ratio!=null?Number(a.short_volume_ratio)/100:(shortVolume&&totalVolume?shortVolume/totalVolume:null),
-      shortDate:a.date??a.trading_date??null,
-      shortInterest:b.short_interest??null,
-      daysToCover:b.days_to_cover??null,
-      float:f.float??f.free_float??null
+      totalVolume,
+      shortRatio,
+      shortInterest,
+      daysToCover:shortRatio,
+      float,
+      shortPercentFloat:pctFloat,
+      shortDate:ref.dateShortInterest?new Date(Number(ref.dateShortInterest)*1000).toISOString().slice(0,10):null
     };
   };
 
@@ -192,13 +239,13 @@ exports.handler = async (event) => {
     if(resistance>last.c*1.15)score+=5;
     if(last.v>=500000)score+=5;
 
-    const splits=await getSplits(symbol);
-    const latestSplit=splits[0]||null;
-    const splitDate=latestSplit?.execution_date||null;
+    const splitEvents=Array.isArray(bars._splits)?bars._splits:[];
+    const latestSplit=splitEvents[0]||null;
+    const splitDate=latestSplit?.date||null;
     const splitDays=splitDate?Math.max(0,Math.floor((Date.now()-new Date(splitDate).getTime())/86400000)):null;
     const splitBars=splitDate?bars.filter(x=>new Date(x.date)>=new Date(splitDate)):[];
     const highAfterSplit=splitDate&&splitBars.length?Math.max(...splitBars.map(x=>x.h)):null;
-    const short=await getShort(symbol);
+    const short=await getShort(symbol,ref);
 
     const shares=Number(ref.share_class_shares_outstanding??ref.weighted_shares_outstanding);
     const marketCap=Number(ref.market_cap);
@@ -231,93 +278,99 @@ exports.handler = async (event) => {
     };
   };
 
-  // Direct search: never apply the scanner's micro-cap gate.
+  // Direct search uses Yahoo multi-quote for fundamentals, then the same technical engine.
   if(requested){
     try{
-      const ref=await getReference(requested);
+      const qmap=await yahooQuotes([requested]);
+      const ref=qmap.get(requested)||await getReference(requested);
       const x=await buildOne(requested,ref);
-      return out(200,{stocks:[x],errors:[],universeCount:1,source:massiveKey?"Massive":"Yahoo Finance",tf,updated:new Date().toLocaleString("ar-SA")});
+      return out(200,{stocks:[x],errors:[],universeCount:1,source:"Yahoo Finance",tf,updated:new Date().toLocaleString("ar-SA")});
     }catch(e){
-      return out(404,{stocks:[],errors:[requested+": "+e.message],universeCount:1,source:massiveKey?"Massive":"Yahoo Finance",tf});
+      return out(404,{stocks:[],errors:[requested+": "+e.message],universeCount:1,source:"Yahoo Finance",tf});
     }
   }
 
   let symbols=[];
-  const diagnostics={snapshot:0,priceVolume:0,referenceChecked:0,microcaps:0,bars:0};
+  const referenceMap=new Map();
+  const diagnostics={snapshot:0,priceVolume:0,referenceChecked:0,microcaps:0,bars:0,yahooQuotes:0};
 
   if(configured.length){
     symbols=configured;
+    try{
+      const qmap=await yahooQuotes(symbols);
+      for(const [k,v] of qmap) referenceMap.set(k,v);
+      diagnostics.yahooQuotes=qmap.size;
+    }catch(e){diagnostics.quoteError=String(e.message||e);}
   } else if(massiveKey){
     try{
-      let grouped=null, usedDate=null, lastError=null;
-      // ابحث عن آخر يوم تداول فعلي، وليس فقط آخر 7 تواريخ تقويمية.
-      for(let back=0;back<14 && !grouped;back++){
+      // Grouped Daily is one bulk request for the whole US market and is included in all Stocks plans.
+      // Only retry the last 3 calendar days to find the latest trading day; never burn 14 requests.
+      let grouped=null,usedDate=null,lastError=null;
+      for(let back=0;back<3&&!grouped;back++){
         const d=new Date(Date.now()-back*86400000).toISOString().slice(0,10);
         try{
-          const j=await massive("/v2/aggs/grouped/locale/us/market/stocks/"+d,{
-            adjusted:"true",
-            include_otc:"true"
-          });
-          if(Array.isArray(j?.results) && j.results.length>0){
-            grouped=j;
-            usedDate=d;
-          }
-        }catch(e){ lastError=String(e.message||e); }
+          const j=await massive("/v2/aggs/grouped/locale/us/market/stocks/"+d,{adjusted:"true",include_otc:"true"});
+          if(Array.isArray(j?.results)&&j.results.length){grouped=j;usedDate=d;}
+        }catch(e){lastError=String(e.message||e);}
       }
 
       const rows=(grouped?.results||[]).map(x=>({
-        symbol:String(x.T||x.ticker||"").toUpperCase(),
-        price:Number(x.c),
-        volume:Number(x.v||0),
-        open:Number(x.o),high:Number(x.h),low:Number(x.l)
+        symbol:String(x.T||"").toUpperCase(),price:Number(x.c),volume:Number(x.v||0)
       })).filter(x=>/^[A-Z][A-Z0-9.\-]{0,7}$/.test(x.symbol)&&Number.isFinite(x.price));
 
       diagnostics.snapshot=rows.length;
-      diagnostics.groupedDate=usedDate||null;
+      diagnostics.groupedDate=usedDate;
       if(!rows.length) throw new Error("Grouped Daily لم يرجع بيانات. آخر خطأ: "+(lastError||"غير معروف"));
 
-      const pv=rows
-        .filter(x=>x.price>=1&&x.price<=10&&x.volume>=100000)
+      const pv=rows.filter(x=>x.price>=1&&x.price<=10&&x.volume>=100000)
         .sort((a,b)=>b.volume-a.volume);
       diagnostics.priceVolume=pv.length;
 
-      const checked=[];
-      // لا نحتاج فحص كل 12 ألف سهم؛ نأخذ الأكثر نشاطاً ثم نتحقق من شروط المايكروكاب.
-      for(let i=0;i<pv.length && checked.length<300;i+=25){
-        const batch=pv.slice(i,i+25);
-        const refs=await Promise.all(batch.map(async x=>{
-          const r=await getReference(x.symbol);
-          const shares=Number(r.share_class_shares_outstanding??r.weighted_shares_outstanding);
-          const reportedCap=Number(r.market_cap);
-          const cap=reportedCap>0?reportedCap:(shares>0?shares*x.price:null);
-          return {...x,ref:r,shares,marketCap:cap};
-        }));
-        checked.push(...refs);
-      }
+      // Massive Basic is only 5 calls/min. Do NOT call reference once per ticker.
+      // Yahoo's multi-symbol quote supplies market cap, shares, float and short statistics in batches.
+      const candidateRows=pv.slice(0,500);
+      const qmap=await yahooQuotes(candidateRows.map(x=>x.symbol));
+      diagnostics.yahooQuotes=qmap.size;
+      diagnostics.referenceChecked=qmap.size;
 
-      diagnostics.referenceChecked=checked.length;
-      const micro=checked.filter(x=>
-        Number.isFinite(x.marketCap)&&x.marketCap>0&&x.marketCap<=10000000&&
-        Number.isFinite(x.shares)&&x.shares>0&&x.shares<=10000000
-      );
+      const micro=[];
+      for(const row of candidateRows){
+        const r=qmap.get(row.symbol);
+        if(!r) continue;
+        const shares=Number(r.sharesOutstanding);
+        const marketCap=Number(r.marketCap);
+        if(Number.isFinite(marketCap)&&marketCap>0&&marketCap<=10000000&&
+           Number.isFinite(shares)&&shares>0&&shares<=10000000){
+          referenceMap.set(row.symbol,r);
+          micro.push({...row,marketCap,shares});
+        }
+      }
       diagnostics.microcaps=micro.length;
-      symbols=micro.sort((a,b)=>b.volume-a.volume).slice(0,80).map(x=>x.symbol);
+      symbols=micro.sort((a,b)=>b.volume-a.volume).slice(0,30).map(x=>x.symbol);
     }catch(e){
       diagnostics.error=String(e.message||e);
     }
   }
+
   if(!symbols.length){
-    return out(200,{stocks:[],errors:["لم يجد الفاحص أسهماً مطابقة بعد مرحلة السعر/الحجم/القيمة السوقية","تشخيص: "+JSON.stringify(diagnostics)],universeCount:0,source:"Massive",tf,diagnostics});
+    return out(200,{stocks:[],errors:["لم يجد الفاحص أسهماً مطابقة بعد مرحلة السعر/الحجم/القيمة السوقية","تشخيص: "+JSON.stringify(diagnostics)],universeCount:0,source:massiveKey?"Massive + Yahoo":"Yahoo Finance",tf,diagnostics});
   }
 
-  const results=[], errors=[];
-  for(let i=0;i<symbols.length;i+=5){
-    const batch=symbols.slice(i,i+5);
+  const results=[],errors=[];
+  for(let i=0;i<symbols.length;i+=6){
+    const batch=symbols.slice(i,i+6);
     const got=await Promise.all(batch.map(async symbol=>{
       try{
-        const ref=await getReference(symbol);
-        const x=await buildOne(symbol,ref);
-        const cap=Number(x.marketCap), shares=Number(x.sharesOutstanding);
+        let ref=referenceMap.get(symbol);
+        if(!ref){
+          try{
+            const qmap=await yahooQuotes([symbol]);
+            ref=qmap.get(symbol)||{};
+            referenceMap.set(symbol,ref);
+          }catch{}
+        }
+        const x=await buildOne(symbol,ref||{});
+        const cap=Number(x.marketCap),shares=Number(x.sharesOutstanding);
         if(!(cap>0&&cap<=10000000&&shares>0&&shares<=10000000)) return null;
         diagnostics.bars++;
         return x;
@@ -326,12 +379,11 @@ exports.handler = async (event) => {
     results.push(...got.filter(Boolean));
   }
 
-  results.sort((a,b)=>b.score-a.score);
   return out(200,{
     stocks:results,
     errors:errors.slice(0,12),
     universeCount:symbols.length,
-    source:"Massive",
+    source:massiveKey?"Massive + Yahoo":"Yahoo Finance",
     tf,
     updated:new Date().toLocaleString("ar-SA"),
     diagnostics
