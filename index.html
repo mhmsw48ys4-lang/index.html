@@ -62,7 +62,7 @@ button,input,select{font:inherit}.app{max-width:820px;margin:auto;padding:14px 1
       <div class="field"><label>البعد عن الدعم</label><select id="maxDistance"><option value="999">بدون شرط</option><option value="20">≤ 20%</option><option value="30">≤ 30%</option><option value="50">≤ 50%</option></select></div>
       <div class="field"><label>MACD</label><select id="macdFilter"><option value="any">الكل</option><option value="positive">يتحسن فقط</option></select></div>
       <div class="field"><label>المتوسطات 20/30/50</label><select id="emaFilter"><option value="any">الكل</option><option value="above">تعافي 20/30/50</option></select></div>
-      <div class="field"><label>الأيام منذ التقسيم</label><select id="splitDays"><option value="all">الكل</option><option value="100">آخر 100 يوم</option><option value="50">آخر 50 يوم</option><option value="30">آخر 30 يوم</option></select></div>
+      <div class="field"><label>التقسيم</label><select id="splitDays"><option value="all">الكل</option><option value="split">مقسم فقط</option><option value="nosplit">غير مقسم</option><option value="100">مقسم آخر 100 يوم</option><option value="50">مقسم آخر 50 يوم</option><option value="30">مقسم آخر 30 يوم</option></select></div>
     </div>
   </div>
 
@@ -92,7 +92,7 @@ function card(x,i){
    <div class="metric"><label>الدعم</label><b>$${fmt(x.support,2)}</b></div>
    <div class="metric"><label>RSI14</label><b>${fmt(x.rsi,1)}</b></div>
    <div class="metric"><label>RVOL</label><b>${fmt(x.rvol,2)}</b></div>
-   <div class="metric"><label>التقسيم</label><b>${x.splitDate?esc(x.splitDays+" يوم"):"—"}</b></div>
+   <div class="metric"><label>التقسيم</label><b>${x.splitDate?("مقسم · "+esc(x.splitDays+" يوم")):"غير مقسم"}</b></div>
    <div class="metric"><label>الثبات</label><b>${x.stability||0}/${x.stabilityNeed||4}</b></div>
   </div>
   <div class="more"><span class="fresh">${esc(x.shortDate||x.updated||"")}</span><button onclick="showDetail('${esc(x.symbol)}')">عرض التفاصيل</button></div>
@@ -106,7 +106,7 @@ function render(){
  const mv=Number($("minVol").value), mr=Number($("minRvol").value), sd=$("splitDays").value;
  const stable=Number($("stableDays").value), maxDist=Number($("maxDistance").value), macdF=$("macdFilter").value, emaF=$("emaFilter").value;
  const rsiMin=Number($("rsiMin").value), rsiMax=Number($("rsiMax").value);\n a=a.filter(x=>Number.isFinite(x.price)&&x.price>=lo&&x.price<=hi&&Number(x.volume||0)>=mv&&Number(x.rvol||0)>=mr&&Number(x.rsi||0)>=rsiMin&&Number(x.rsi||0)<=rsiMax&&Number(x.distance??999)<=maxDist&&(stable===0||Number(x.stability||0)>=stable)&&(macdF==="any"||x.macdOK===true)&&(emaF==="any"||x.emaOK===true));
- if(sd!=="all") a=a.filter(x=>x.splitDays!=null&&x.splitDays<=Number(sd));
+ if(sd==="split") a=a.filter(x=>x.splitDate);\n if(sd==="nosplit") a=a.filter(x=>!x.splitDate);\n if(["100","50","30"].includes(sd)) a=a.filter(x=>x.splitDate&&x.splitDays!=null&&x.splitDays<=Number(sd));
  const s=$("sort").value;
  a.sort((x,y)=>s==="rvol"?y.rvol-x.rvol:y.score-x.score);
  $("count").textContent=a.length;
