@@ -157,7 +157,8 @@ exports.handler = async (event) => {
   async function shortData(symbol){
     if(!massiveKey) return {};
     try{
-      const ref=referenceCache.get(symbol)||{};
+      let ref=referenceCache.get(symbol)||{};
+      if(!Object.keys(ref).length){ const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(symbol),{}); ref=rr?.results||{}; }
       const splitResp=await massive("/v3/reference/splits",{ticker:symbol,limit:20,sort:"execution_date.desc"});
       const sp=splitResp?.results?.[0]||null;
       const r=ref;
