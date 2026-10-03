@@ -92,33 +92,37 @@ exports.handler = async (event) => {
 
   async function universe(){
     if(configured.length) return configured;
+
+    // Build candidates from the live snapshot, then validate the user's exact
+    // micro-cap rules from ticker reference data. Keep the candidate set small
+    // enough that one scan does not explode API usage.
     if(massiveKey){
       try{
         const j=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
-        const rows=(j?.tickers||[]).map(x=>({symbol:x.ticker,price:x.day?.c??x.lastTrade?.p??null,volume:x.day?.v??0}));
-        const candidates=rows.filter(x=>x.symbol&&x.price>=1&&x.price<=10&&x.volume>=100000).sort((a,b)=>b.volume-a.volume).slice(0,150);
-        // لا نستخدم market cap من الـsnapshot. نفحص المرجع لكل مرشح، لكن لا نسقط السهم
-        // إذا كانت بيانات المرجع ناقصة؛ عندها يمر للتحليل الفني، وتظهر بياناته إن توفرت.
-        const checked=[];
-        for(let i=0;i<candidates.length;i+=15){
-          const batch=candidates.slice(i,i+15);
-          const refs=await Promise.all(batch.map(async x=>{
-            try{
-              const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(x.symbol),{});
-              const z=rr?.results||{};
-              const mc=Number(z.market_cap), so=Number(z.share_class_shares_outstanding??z.weighted_shares_outstanding);
-              return {symbol:x.symbol,marketCap:mc,sharesOutstanding:so};
-            }catch{return {symbol:x.symbol,marketCap:null,sharesOutstanding:null};}
-          }));
-          checked.push(...refs);
+        const rows=(j?.tickers||[])
+          .map(x=>({symbol:x.ticker,price:Number(x.day?.c??x.lastTrade?.p),volume:Number(x.day?.v??0)}))
+          .filter(x=>x.symbol&&Number.isFinite(x.price)&&x.price>=1&&x.price<=10&&x.volume>=100000)
+          .sort((a,b)=>b.volume-a.volume)
+          .slice(0,80);
+
+        const eligible=[];
+        for(const x of rows){
+          try{
+            const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(x.symbol),{});
+            const z=rr?.results||{};
+            const mc=Number(z.market_cap);
+            const so=Number(z.share_class_shares_outstanding??z.weighted_shares_outstanding);
+            if(Number.isFinite(mc)&&Number.isFinite(so)&&mc<=10000000&&so<=10000000){
+              eligible.push(x.symbol);
+            }
+            if(eligible.length>=30) break;
+          }catch{}
         }
-        // نفضل المطابقين للـ10M، وإذا لم يرجع الـAPI هذه الحقول نسمح بالمرشح
-        // حتى لا تصبح الشاشة صفرًا بسبب نقص بيانات مرجعية.
-        const exact=checked.filter(x=>x.marketCap>0&&x.sharesOutstanding>0&&x.marketCap<=10000000&&x.sharesOutstanding<=10000000).map(x=>x.symbol);
-        const picked=exact.slice(0,80);
-        if(picked.length) return picked;
+        if(eligible.length) return eligible;
       }catch{}
     }
+
+    // Yahoo fallback. Only accept rows where both limits are explicitly known.
     try{
       const ids=["most_actives","day_gainers","day_losers"];
       const all=new Map();
@@ -132,12 +136,18 @@ exports.handler = async (event) => {
         const rows=j?.finance?.result?.[0]?.quotes||[];
         for(const x of rows){
           const p=Number(x.regularMarketPrice), v=Number(x.regularMarketVolume||0);
-          const mc=Number(x.marketCap??x.market_cap??x.marketCapRaw??0); const so=Number(x.sharesOutstanding??x.share_class_shares_outstanding??x.weighted_shares_outstanding??0); if(x.symbol&&p>=1&&p<=10&&v>=100000&&true) all.set(x.symbol,{symbol:x.symbol,price:p,volume:v,marketCap:mc,sharesOutstanding:so});
+          const mc=Number(x.marketCap), so=Number(x.sharesOutstanding);
+          if(x.symbol&&p>=1&&p<=10&&v>=100000&&Number.isFinite(mc)&&Number.isFinite(so)&&mc<=10000000&&so<=10000000){
+            all.set(x.symbol,{volume:v});
+          }
         }
       }
-      const picked=[...all.values()].sort((a,b)=>(b.volume||0)-(a.volume||0)).slice(0,120).map(x=>x.symbol);
+      const picked=[...all.entries()].sort((a,b)=>b[1].volume-a[1].volume).slice(0,30).map(x=>x[0]);
       if(picked.length) return picked;
     }catch{}
+
+    // Keep the fallback list for direct usability; the final reference check
+    // below still enforces the 10M/10M rule.
     return fallbackSymbols;
   }
 
