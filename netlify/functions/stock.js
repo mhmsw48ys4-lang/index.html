@@ -249,64 +249,47 @@ exports.handler = async (event) => {
     symbols=configured;
   } else if(massiveKey){
     try{
-      const snap=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{include_otc:"true"});
-      const rows=(snap?.tickers||[]).map(x=>({
-        symbol:String(x.ticker||"").toUpperCase(),
-        price:Number(x.day?.c??x.lastTrade?.p),
-        volume:Number(x.day?.v??0)
+      // لا نعتمد على Full Market Snapshot لأنه متاح في خطط Massive محددة.
+      // نستخدم Grouped Daily الذي يرجع جميع أسهم السوق في طلب واحد.
+      let grouped=null, usedDate=null;
+      for(let back=0;back<7 && !grouped;back++){
+        const d=new Date(Date.now()-back*86400000).toISOString().slice(0,10);
+        try{
+          const j=await massive("/v2/aggs/grouped/locale/us/market/stocks/"+d,{adjusted:"true"});
+          if(j?.results?.length){grouped=j;usedDate=d;}
+        }catch{}
+      }
+      const rows=(grouped?.results||[]).map(x=>({
+        symbol:String(x.T||"").toUpperCase(),
+        price:Number(x.c),volume:Number(x.v||0),open:Number(x.o),high:Number(x.h),low:Number(x.l)
       })).filter(x=>/^[A-Z][A-Z0-9.\-]{0,7}$/.test(x.symbol));
       diagnostics.snapshot=rows.length;
-
-      const pv=rows.filter(x=>Number.isFinite(x.price)&&x.price>=1&&x.price<=10&&Number.isFinite(x.volume)&&x.volume>=100000)
-        .sort((a,b)=>b.volume-a.volume);
+      const pv=rows.filter(x=>x.price>=1&&x.price<=10&&x.volume>=100000).sort((a,b)=>b.volume-a.volume);
       diagnostics.priceVolume=pv.length;
+      diagnostics.groupedDate=usedDate||null;
 
-      // Reference data is only used to enforce the user's actual micro-cap limits.
-      // Do not make optional short/split feeds capable of removing a stock.
+      // نفحص أفضل المرشحين بالمرجع فقط، ثم نطبق:
+      // Market Cap <= $10M + Shares Outstanding <= 10M.
       const checked=[];
-      for(let i=0;i<pv.length;i+=25){
+      for(let i=0;i<pv.length && checked.length<300;i+=25){
         const batch=pv.slice(i,i+25);
         const refs=await Promise.all(batch.map(async x=>{
           const r=await getReference(x.symbol);
           const shares=Number(r.share_class_shares_outstanding??r.weighted_shares_outstanding);
-          const mc=Number(r.market_cap);
-          const cap=Number.isFinite(mc)&&mc>0?mc:(Number.isFinite(shares)&&shares>0?shares*x.price:null);
+          const reportedCap=Number(r.market_cap);
+          const cap=reportedCap>0?reportedCap:(shares>0?shares*x.price:null);
           return {...x,ref:r,shares,marketCap:cap};
         }));
         checked.push(...refs);
-        if(checked.length>=250) break;
       }
       diagnostics.referenceChecked=checked.length;
-      const micro=checked.filter(x=>Number.isFinite(x.marketCap)&&x.marketCap>0&&x.marketCap<=10000000&&Number.isFinite(x.shares)&&x.shares>0&&x.shares<=10000000);
+      const micro=checked.filter(x=>x.marketCap>0&&x.marketCap<=10000000&&x.shares>0&&x.shares<=10000000);
       diagnostics.microcaps=micro.length;
       symbols=micro.sort((a,b)=>b.volume-a.volume).slice(0,80).map(x=>x.symbol);
     }catch(e){
       diagnostics.error=String(e.message||e);
     }
-  } else {
-    try{
-      const all=new Map();
-      for(const scr of ["most_actives","day_gainers","day_losers"]){
-        const u=new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
-        u.searchParams.set("scrIds",scr); u.searchParams.set("count","250");
-        const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
-        if(!r.ok) continue;
-        const j=await r.json();
-        for(const x of j?.finance?.result?.[0]?.quotes||[]){
-          const symbol=String(x.symbol||"").toUpperCase();
-          const price=Number(x.regularMarketPrice), volume=Number(x.regularMarketVolume||0);
-          const shares=Number(x.sharesOutstanding||0), cap=Number(x.marketCap||0);
-          if(/^[A-Z][A-Z0-9.\\-]{0,7}$/.test(symbol)&&price>=1&&price<=10&&volume>=100000&&shares>0&&shares<=10000000&&cap>0&&cap<=10000000)
-            all.set(symbol,{symbol,price,volume,shares,marketCap:cap});
-        }
-      }
-      const rows=[...all.values()].sort((a,b)=>b.volume-a.volume);
-      diagnostics.snapshot=rows.length; diagnostics.priceVolume=rows.length; diagnostics.microcaps=rows.length;
-      symbols=rows.slice(0,80).map(x=>x.symbol);
-    }catch(e){ diagnostics.error="Yahoo fallback: "+String(e.message||e); }
-  }
-
-  if(!symbols.length){
+  }  if(!symbols.length){
     return out(200,{stocks:[],errors:["لم يجد الفاحص أسهماً مطابقة بعد مرحلة السعر/الحجم/القيمة السوقية","تشخيص: "+JSON.stringify(diagnostics)],universeCount:0,source:"Massive",tf,diagnostics});
   }
 
