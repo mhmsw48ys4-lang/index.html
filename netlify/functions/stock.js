@@ -92,62 +92,53 @@ exports.handler = async (event) => {
 
   async function universe(){
     if(configured.length) return configured;
+    if(!massiveKey) return fallbackSymbols;
 
-    // Build candidates from the live snapshot, then validate the user's exact
-    // micro-cap rules from ticker reference data. Keep the candidate set small
-    // enough that one scan does not explode API usage.
-    if(massiveKey){
-      try{
-        const j=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
-        const rows=(j?.tickers||[])
-          .map(x=>({symbol:x.ticker,price:Number(x.day?.c??x.lastTrade?.p),volume:Number(x.day?.v??0)}))
-          .filter(x=>x.symbol&&Number.isFinite(x.price)&&x.price>=1&&x.price<=10&&x.volume>=100000)
-          .sort((a,b)=>b.volume-a.volume)
-          .slice(0,80);
-
-        const eligible=[];
-        for(const x of rows){
-          try{
-            const rr=await massive("/v3/reference/tickers/"+encodeURIComponent(x.symbol),{});
-            const z=rr?.results||{};
-            const mc=Number(z.market_cap);
-            const so=Number(z.share_class_shares_outstanding??z.weighted_shares_outstanding);
-            if(Number.isFinite(mc)&&Number.isFinite(so)&&mc<=10000000&&so<=10000000){
-              eligible.push(x.symbol);
-            }
-            if(eligible.length>=30) break;
-          }catch{}
-        }
-        if(eligible.length) return eligible;
-      }catch{}
-    }
-
-    // Yahoo fallback. Only accept rows where both limits are explicitly known.
     try{
-      const ids=["most_actives","day_gainers","day_losers"];
-      const all=new Map();
-      for(const scrIds of ids){
-        const u=new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
-        u.searchParams.set("scrIds",scrIds);
-        u.searchParams.set("count","250");
-        const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
-        if(!r.ok) continue;
-        const j=await r.json();
-        const rows=j?.finance?.result?.[0]?.quotes||[];
-        for(const x of rows){
-          const p=Number(x.regularMarketPrice), v=Number(x.regularMarketVolume||0);
-          const mc=Number(x.marketCap), so=Number(x.sharesOutstanding);
-          if(x.symbol&&p>=1&&p<=10&&v>=100000&&Number.isFinite(mc)&&Number.isFinite(so)&&mc<=10000000&&so<=10000000){
-            all.set(x.symbol,{volume:v});
-          }
+      // 1) نأخذ أسهم الـmicro-cap من المرجع، ولا نحسب السعر من market cap.
+      const refResp=await massive("/v3/reference/tickers",{
+        market:"stocks",
+        locale:"us",
+        type:"CS",
+        active:"true",
+        "market_cap.lte":"10000000",
+        limit:1000,
+        sort:"market_cap",
+        order:"asc"
+      });
+      const refs=(refResp?.results||[]).filter(x=>x?.ticker);
+      if(!refs.length) return fallbackSymbols;
+
+      // 2) نأخذ السعر والحجم الحقيقيين من snapshot.
+      const snapResp=await massive("/v2/snapshot/locale/us/markets/stocks/tickers",{});
+      const snap=new Map((snapResp?.tickers||[]).map(x=>[String(x.ticker||"").toUpperCase(),x]));
+
+      const candidates=[];
+      for(const r of refs){
+        const symbol=String(r.ticker).toUpperCase();
+        const marketCap=Number(r.market_cap);
+        const shares=Number(r.share_class_shares_outstanding??r.weighted_shares_outstanding);
+        const s=snap.get(symbol);
+        const price=Number(s?.day?.c??s?.lastTrade?.p);
+        const volume=Number(s?.day?.v??0);
+
+        if(
+          Number.isFinite(marketCap) && marketCap>0 && marketCap<=10000000 &&
+          Number.isFinite(shares) && shares>0 && shares<=10000000 &&
+          Number.isFinite(price) && price>=1 && price<=10 &&
+          Number.isFinite(volume) && volume>=100000
+        ){
+          referenceCache.set(symbol,r);
+          candidates.push({symbol,marketCap,shares,price,volume});
         }
       }
-      const picked=[...all.entries()].sort((a,b)=>b[1].volume-a[1].volume).slice(0,30).map(x=>x[0]);
-      if(picked.length) return picked;
+
+      // نرتب بالحجم حتى تظهر الأسهم النشطة فعلاً، ثم نحلل أفضل 60 فقط.
+      candidates.sort((a,b)=>b.volume-a.volume);
+      if(candidates.length) return candidates.slice(0,60).map(x=>x.symbol);
     }catch{}
 
-    // Keep the fallback list for direct usability; the final reference check
-    // below still enforces the 10M/10M rule.
+    // fallback لا يلغي شرط micro-cap؛ مرحلة التحليل النهائية تتحقق من المرجع.
     return fallbackSymbols;
   }
 
