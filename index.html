@@ -9,7 +9,7 @@
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Tahoma,Arial,sans-serif}
 button,input,select{font:inherit}.app{max-width:820px;margin:auto;padding:14px 12px 42px}
 .top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 4px 10px}.brand{text-align:center;flex:1}.brand h1{font-size:25px;margin:0;font-weight:900}.brand p{margin:3px 0 0;color:#77868a;font-size:13px}.circle{width:46px;height:46px;border:0;border-radius:50%;background:#fff;box-shadow:var(--shadow);font-size:21px}
-.scanbar{background:var(--dark);color:#fff;border-radius:18px;padding:12px 15px;display:flex;justify-content:space-between;align-items:center;font-size:13px;box-shadow:var(--shadow)}.live{color:#20d2a9}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#16c99d;margin-left:5px}
+.newslink{display:block;text-align:center;text-decoration:none;background:#fff;color:#07353a;border:1px solid #e0e7e6;border-radius:16px;padding:11px 14px;margin-top:10px;font-weight:900;box-shadow:0 8px 24px rgba(24,48,52,.08)}.scanbar{background:var(--dark);color:#fff;border-radius:18px;padding:12px 15px;display:flex;justify-content:space-between;align-items:center;font-size:13px;box-shadow:var(--shadow)}.live{color:#20d2a9}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#16c99d;margin-left:5px}
 .tabs{display:grid;grid-template-columns:repeat(3,1fr);background:#e5ecea;border-radius:18px;padding:4px;margin-top:12px}.tab{border:0;background:transparent;padding:13px 4px;border-radius:15px;color:#3f4e52;font-weight:800}.tab.active{background:#fff;box-shadow:0 3px 12px #163b4010}.tab small{display:block;color:var(--green);font-size:11px;margin-top:2px}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:12px}.stat{background:#fff;border-radius:17px;padding:13px 8px;text-align:center;box-shadow:var(--shadow)}.stat b{font-size:27px;display:block}.stat span{font-size:12px;color:#718084}
 .searchrow{display:flex;gap:8px;margin-top:12px}.search{flex:1;position:relative}.search input{width:100%;height:52px;border:1px solid var(--line);background:#fff;border-radius:18px;padding:0 45px 0 14px;outline:none}.search span{position:absolute;right:16px;top:13px;font-size:21px;color:#77868a}.filterbtn,.searchbtn{border:0;background:var(--dark);color:#fff;border-radius:17px;padding:0 18px;font-weight:900}.searchbtn{min-width:72px}
@@ -33,6 +33,7 @@ button,input,select{font:inherit}.app{max-width:820px;margin:auto;padding:14px 1
   </header>
 
   <div class="scanbar"><span><i class="dot"></i>آخر مسح <b id="lastScan">—</b></span><span>المسح القادم <b id="nextScan">يومياً</b></span></div>
+  <a class="newslink" href="/news.html">📰 ماسح الأخبار — أسهم $1–$7</a>
 
   <div class="tabs" id="tabs">
     <button class="tab" data-tf="4h">4 ساعات</button>
