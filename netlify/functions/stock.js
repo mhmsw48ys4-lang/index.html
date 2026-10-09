@@ -122,14 +122,18 @@ exports.handler = async (event) => {
         try {
           const interval = tf === "1w" ? "W" : tf === "4h" ? "M240" : "D";
           const count = tf === "1w" ? "700" : "420";
-          const wb = await webullRequest("/market-data/stocks/bars/get", {
-            symbol,
+          const wb = await webullRequest("/market-data/stocks/bars/list", {
+            symbols: JSON.stringify([symbol]),
             category: "US_STOCK",
-            interval,
+            timespan: interval,
             count,
             real_time_required: "true"
           });
-          const rows = Array.isArray(wb?.result) ? wb.result : Array.isArray(wb?.data) ? wb.data : [];
+          // Batch endpoint wraps each symbol in its own result object.
+          const wrapped = Array.isArray(wb?.result) ? wb.result : Array.isArray(wb?.data) ? wb.data : [];
+          const rows = wrapped.length && Array.isArray(wrapped[0]?.result)
+            ? wrapped[0].result
+            : wrapped;
           const bars = rows.map(x => ({
             date: new Date(x.time || x.timestamp || x.t).toISOString(),
             o: Number(x.open ?? x.o),
@@ -452,9 +456,9 @@ exports.handler = async (event) => {
       });
     } catch (e) { snapshotError = String(e.message || e); }
     try {
-      bars = await webullRequest("/market-data/stocks/bars/get", {
-        symbol, category: "US_STOCK", interval: "D", count: "5",
-        real_time_required: "false"
+      bars = await webullRequest("/market-data/stocks/bars/list", {
+        symbols: JSON.stringify([symbol]), category: "US_STOCK",
+        timespan: "D", count: "5", real_time_required: "false"
       });
     } catch (e) { barsError = String(e.message || e); }
     const ok = snapshot !== null || bars !== null;
