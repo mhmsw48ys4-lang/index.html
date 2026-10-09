@@ -2,6 +2,8 @@ exports.handler = async (event) => {
   const q = event.queryStringParameters || {};
   const tf = q.tf || "1d";
   const requested = String(q.symbol || "").trim().toUpperCase().replace(/[^A-Z0-9.\-]/g, "");
+  const massiveKey = process.env.MASSIVE_API_KEY;
+  const alphaKey = process.env.ALPHA_VANTAGE_API_KEY;
   const configured = String(process.env.SCAN_SYMBOLS || "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
 
   const headers = {
@@ -11,7 +13,37 @@ exports.handler = async (event) => {
   };
   const out = (status, body) => ({ statusCode: status, headers, body: JSON.stringify(body) });
 
+  const massive = async (path, params = {}) => {
+    if (!massiveKey) return null;
+    const u = new URL("https://api.massive.com" + path);
+    u.searchParams.set("apiKey", massiveKey);
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== "") u.searchParams.set(k, String(v));
+    }
+    const r = await fetch(u);
+    const text = await r.text();
+    let j = {};
+    try { j = JSON.parse(text); } catch {}
+    if (!r.ok) throw new Error("Massive " + r.status + (j?.error ? ": " + j.error : ""));
+    return j;
+  };
+
+  const alpha = async (params) => {
+    if (!alphaKey) return null;
+    const u = new URL("https://www.alphavantage.co/query");
+    for (const [k, v] of Object.entries({ ...params, apikey: alphaKey })) u.searchParams.set(k, String(v));
+    const r = await fetch(u);
+    const j = await r.json();
+    if (j["Error Message"] || j["Note"] || j["Information"]) throw new Error(j["Error Message"] || j["Note"] || j["Information"]);
+    return j;
+  };
+
   const dateAgo = days => new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+
+  const normalize = rows => (rows || []).map(x => ({
+    date: new Date(x.t || x.date).toISOString(),
+    o: Number(x.o), h: Number(x.h), l: Number(x.l), c: Number(x.c), v: Number(x.v || 0)
+  })).filter(x => [x.o,x.h,x.l,x.c].every(Number.isFinite)).sort((a,b) => a.date.localeCompare(b.date));
 
   const yahooBars = async symbol => {
     const end = Math.floor(Date.now()/1000);
@@ -36,10 +68,7 @@ exports.handler = async (event) => {
       } catch(e) { lastError=e; }
     }
     const z = j?.chart?.result?.[0];
-    if (!z) {
-      throw new Error((lastError?.message || "لا توجد بيانات تاريخية من Yahoo") +
-        "؛ تحقق من توفر الشموع التاريخية في Yahoo Finance");
-    }
+    if (!z) throw new Error(lastError?.message || "لا توجد بيانات سعر من Yahoo");
 
     const ts = z.timestamp || [];
     const qv = z.indicators?.quote?.[0] || {};
@@ -123,7 +152,22 @@ exports.handler = async (event) => {
     return map;
   };
 
-  const getBars = async symbol => yahooBars(symbol);
+  const getBars = async symbol => {
+    try {
+      return await yahooBars(symbol);
+    } catch (yErr) {
+      if (!massiveKey) throw yErr;
+      let mult=1,span="day",days=420,limit=500;
+      if(tf==="1w"){span="week";days=1500;}
+      if(tf==="4h"){mult=4;span="hour";days=120;}
+      const j=await massive("/v2/aggs/ticker/"+encodeURIComponent(symbol)+"/range/"+mult+"/"+span+"/"+dateAgo(days)+"/"+dateAgo(0),{
+        adjusted:"true",sort:"asc",limit
+      });
+      const bars=normalize(j?.results);
+      if(bars.length>=35) return bars;
+      throw yErr;
+    };
+  };
 
   const ema = (a,p) => {
     if(a.length<p) return null;
@@ -144,47 +188,20 @@ exports.handler = async (event) => {
     return e12==null||e26==null?null:e12-e26;
   };
 
+  const getReference = async symbol => {
+    if(!massiveKey) return {};
+    try {
+      const j=await massive("/v3/reference/tickers/"+encodeURIComponent(symbol),{});
+      return j?.results || {};
+    } catch { return {}; }
+  };
 
-  // Public no-key Yahoo fundamentals fallback. Share count is only accepted when explicitly reported.
-  const yahooFundamentals = async symbol => {
-    let lastError = null;
-    const end = Math.floor(Date.now()/1000), start = end - 5*365*86400;
-    for (const host of ["query2.finance.yahoo.com","query1.finance.yahoo.com"]) {
-      const u = new URL("https://" + host + "/ws/fundamentals-timeseries/v1/finance/timeseries/" + encodeURIComponent(symbol));
-      u.searchParams.set("symbol", symbol);
-      u.searchParams.set("type", "sharesOutstanding,impliedSharesOutstanding,trailingMarketCap");
-      u.searchParams.set("period1", String(start));
-      u.searchParams.set("period2", String(end));
-      try {
-        const response = await fetch(u, {headers: {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125 Safari/537.36", "Accept":"application/json"}});
-        if (!response.ok) { lastError = new Error("Yahoo fundamentals " + response.status); continue; }
-        const j = await response.json();
-        const found = {};
-        const latest = arr => {
-          if (!Array.isArray(arr)) return null;
-          const vals = arr.map(v => ({t:Number(v.timestamp || 0), n:Number(v?.reportedValue?.raw ?? v?.raw ?? v?.value)}))
-            .filter(v => v.n > 0 && Number.isFinite(v.n)).sort((a,b) => b.t-a.t);
-          return vals.length ? vals[0].n : null;
-        };
-        const walk = node => {
-          if (!node || typeof node !== "object") return;
-          if (Array.isArray(node)) { node.forEach(walk); return; }
-          for (const key of ["sharesOutstanding","impliedSharesOutstanding","trailingMarketCap"]) {
-            if (found[key] == null && Array.isArray(node[key])) {
-              const n = latest(node[key]);
-              if (n != null) found[key] = n;
-            }
-          }
-          Object.values(node).forEach(v => { if (v && typeof v === "object") walk(v); });
-        };
-        walk(j);
-        if (found.sharesOutstanding == null && found.impliedSharesOutstanding != null) found.sharesOutstanding = found.impliedSharesOutstanding;
-        if (found.marketCap == null && found.trailingMarketCap != null) found.marketCap = found.trailingMarketCap;
-        if (Object.keys(found).length) return found;
-        lastError = new Error("Yahoo fundamentals لم يرجع بيانات الأسهم");
-      } catch (e) { lastError = e; }
-    }
-    throw lastError || new Error("Yahoo fundamentals unavailable");
+  const getSplits = async symbol => {
+    if(!massiveKey) return [];
+    try {
+      const j=await massive("/stocks/v1/splits",{ticker:symbol,limit:100,sort:"execution_date.desc"});
+      return j?.results || [];
+    } catch { return []; }
   };
 
   const getShort = async (symbol, ref={}) => {
@@ -267,10 +284,9 @@ exports.handler = async (event) => {
     const short=await getShort(symbol,ref);
 
     const reportedShares=Number(ref.share_class_shares_outstanding??ref.weighted_shares_outstanding??ref.sharesOutstanding??ref.shares_outstanding);
-    const marketCapRaw=Number(ref.market_cap??ref.marketCap??ref.trailingMarketCap);
-    // Never label marketCap/price as a verified share count.
-    const shares=Number.isFinite(reportedShares)&&reportedShares>0?reportedShares:NaN;
-    const derivedCap=Number.isFinite(marketCapRaw)&&marketCapRaw>0?marketCapRaw:null;
+    const marketCapRaw=Number(ref.market_cap??ref.marketCap);
+    const shares=Number.isFinite(reportedShares)&&reportedShares>0?reportedShares:(Number.isFinite(marketCapRaw)&&marketCapRaw>0&&last.c>0?marketCapRaw/last.c:NaN);
+    const derivedCap=Number.isFinite(marketCapRaw)&&marketCapRaw>0?marketCapRaw:(Number.isFinite(shares)&&shares>0?shares*last.c:null);
 
     return {
       symbol,
@@ -301,13 +317,12 @@ exports.handler = async (event) => {
     };
   };
 
+  // Direct search uses Yahoo multi-quote for fundamentals, then the same technical engine.
   if(requested){
     try{
       let ref={};
       try { const qmap=await yahooQuotes([requested]); ref=qmap.get(requested)||{}; } catch {}
-      if (!(Number(ref.sharesOutstanding??ref.shares_outstanding??ref.share_class_shares_outstanding)>0) || !(Number(ref.marketCap??ref.market_cap)>0)) {
-        try { ref={...ref,...await yahooFundamentals(requested)}; } catch {}
-      }
+      if(!Object.keys(ref).length) ref=await getReference(requested);
       const x=await buildOne(requested,ref);
       return out(200,{stocks:[x],errors:[],universeCount:1,source:"Yahoo Finance",tf,updated:new Date().toLocaleString("ar-SA")});
     }catch(e){
@@ -327,10 +342,54 @@ exports.handler = async (event) => {
       for(const [k,v] of qmap) referenceMap.set(k,v);
       diagnostics.yahooQuotes=qmap.size;
     }catch(e){diagnostics.quoteError=String(e.message||e);}
+  } else if(massiveKey){
+    try{
+      // Grouped Daily is one bulk request for the whole US market and is included in all Stocks plans.
+      // Only retry the last 3 calendar days to find the latest trading day; never burn 14 requests.
+      let grouped=null,usedDate=null,lastError=null;
+      for(let back=0;back<3&&!grouped;back++){
+        const d=new Date(Date.now()-back*86400000).toISOString().slice(0,10);
+        try{
+          const j=await massive("/v2/aggs/grouped/locale/us/market/stocks/"+d,{adjusted:"true",include_otc:"true"});
+          if(Array.isArray(j?.results)&&j.results.length){grouped=j;usedDate=d;}
+        }catch(e){lastError=String(e.message||e);}
+      }
+
+      const rows=(grouped?.results||[]).map(x=>({
+        symbol:String(x.T||"").toUpperCase(),price:Number(x.c),volume:Number(x.v||0)
+      })).filter(x=>/^[A-Z][A-Z0-9.\-]{0,7}$/.test(x.symbol)&&Number.isFinite(x.price));
+
+      diagnostics.snapshot=rows.length;
+      diagnostics.groupedDate=usedDate;
+      if(!rows.length) throw new Error("Grouped Daily لم يرجع بيانات. آخر خطأ: "+(lastError||"غير معروف"));
+
+      const pv=rows.filter(x=>x.price>=1&&x.price<=8&&x.volume>=100000)
+        .sort((a,b)=>b.volume-a.volume);
+      diagnostics.priceVolume=pv.length;
+
+      // Massive Basic is only 5 calls/min. Do NOT call reference once per ticker.
+      // Yahoo's multi-symbol quote supplies market cap, shares, float and short statistics in batches.
+      const candidateRows=pv.slice(0,500);
+      const qmap=await yahooQuotes(candidateRows.map(x=>x.symbol));
+      diagnostics.yahooQuotes=qmap.size;
+      diagnostics.referenceChecked=qmap.size;
+
+      const candidates=[];
+      for(const row of candidateRows){
+        const r=qmap.get(row.symbol);
+        if(!r) continue;
+        referenceMap.set(row.symbol,r);
+        candidates.push(row);
+      }
+      diagnostics.eligibleCandidates=candidates.length;
+      // Do not incorrectly discard stocks solely because their market cap or share count exceeds an arbitrary $10M cap.
+      symbols=candidates.sort((a,b)=>b.volume-a.volume).slice(0,30).map(x=>x.symbol);
+    }catch(e){
+      diagnostics.error=String(e.message||e);
+    }
   }
 
-
-  if(!symbols.length && !configured.length){
+  if(!symbols.length && !massiveKey && !configured.length){
     try {
       const ids=["most_actives","day_gainers","small_cap_gainers"];
       const seen=new Map();
@@ -372,7 +431,7 @@ exports.handler = async (event) => {
   }
 
   // Last-resort universe: still run the technical engine if Yahoo's predefined screeners are unavailable.
-  if(!symbols.length && !configured.length){
+  if(!symbols.length && !massiveKey && !configured.length){
     symbols=[...new Set([
       "NTCL","PN","FEMY","AMIX","SILO","PRFX","DXST","INUV","BGL","ATPC",
       "MTEN","AMOD","PTLE","SMSI","CETX","WXM","ICCM","VRAX","ORIS","YYGH",
@@ -382,8 +441,7 @@ exports.handler = async (event) => {
   }
 
   if(!symbols.length){
-    diagnostics.message = "Yahoo Finance لم يُرجع قائمة أسهم قابلة للتحليل في هذه المحاولة.";
-    return out(200,{stocks:[],errors:["لم تصل قائمة أسهم من Yahoo Finance: "+JSON.stringify(diagnostics)],universeCount:0,source:"Yahoo Finance",tf,diagnostics});
+    return out(200,{stocks:[],errors:["لم تصل قائمة أسهم من مزود البيانات. راجع تشخيص المصدر: "+JSON.stringify(diagnostics)],universeCount:0,source:massiveKey?"Massive + Yahoo":"Yahoo Finance",tf,diagnostics});
   }
 
   const results=[],errors=[];
@@ -391,17 +449,15 @@ exports.handler = async (event) => {
     const batch=symbols.slice(i,i+6);
     const got=await Promise.all(batch.map(async symbol=>{
       try{
-        let ref=referenceMap.get(symbol)||{};
-        try {
-          const qmap=await yahooQuotes([symbol]);
-          ref={...ref,...(qmap.get(symbol)||{})};
-        } catch {}
-        if (!(Number(ref.sharesOutstanding??ref.shares_outstanding??ref.share_class_shares_outstanding)>0) || !(Number(ref.marketCap??ref.market_cap)>0)) {
-          try { ref={...ref,...await yahooFundamentals(symbol)}; }
-          catch(e) { diagnostics["fundamentals_"+symbol]=String(e.message||e); }
+        let ref=referenceMap.get(symbol);
+        if(!ref){
+          try{
+            const qmap=await yahooQuotes([symbol]);
+            ref=qmap.get(symbol)||{};
+            referenceMap.set(symbol,ref);
+          }catch{}
         }
-        referenceMap.set(symbol,ref);
-        const x=await buildOne(symbol,ref);
+        const x=await buildOne(symbol,ref||{});
         diagnostics.bars++;
         return x;
       }catch(e){errors.push(symbol+": "+e.message);return null;}
@@ -414,14 +470,11 @@ exports.handler = async (event) => {
     const cap=Number(x.marketCap), shares=Number(x.sharesOutstanding);
     const capKnown=Number.isFinite(cap)&&cap>0;
     const sharesKnown=Number.isFinite(shares)&&shares>0;
-    // Exclude only when a reported value proves the stock is outside the requested limits.
     if(capKnown&&cap>=10000000) return false;
     if(sharesKnown&&shares>=5000000) return false;
     return true;
   });
   diagnostics.rejectedByMicrocapLimits=beforeLimits-eligible.length;
-  diagnostics.rejectedMissingMarketCap=results.filter(x=>!(Number.isFinite(Number(x.marketCap))&&Number(x.marketCap)>0)).length;
-  diagnostics.rejectedMissingShares=results.filter(x=>!(Number.isFinite(Number(x.sharesOutstanding))&&Number(x.sharesOutstanding)>0)).length;
   eligible.sort((a,b)=>{const as=a.splitDate&&Number(a.splitDays)<=100?1:0,bs=b.splitDate&&Number(b.splitDays)<=100?1:0;if(bs!==as)return bs-as;if(a.splitDate&&!b.splitDate)return -1;if(b.splitDate&&!a.splitDate)return 1;return Number(b.score||0)-Number(a.score||0);});
 
   if(!eligible.length) {
@@ -434,7 +487,7 @@ exports.handler = async (event) => {
     stocks:eligible,
     errors:errors.slice(0,12),
     universeCount:symbols.length,
-    source:"Yahoo Finance",
+    source:massiveKey?"Massive + Yahoo":"Yahoo Finance",
     tf,
     updated:new Date().toLocaleString("ar-SA"),
     diagnostics
