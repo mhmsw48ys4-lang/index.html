@@ -2,8 +2,6 @@ exports.handler = async (event) => {
   const q = event.queryStringParameters || {};
   const tf = q.tf || "1d";
   const requested = String(q.symbol || "").trim().toUpperCase().replace(/[^A-Z0-9.\-]/g, "");
-  const massiveKey = process.env.MASSIVE_API_KEY;
-  const alphaKey = process.env.ALPHA_VANTAGE_API_KEY;
   const configured = String(process.env.SCAN_SYMBOLS || "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
 
   const headers = {
@@ -13,98 +11,7 @@ exports.handler = async (event) => {
   };
   const out = (status, body) => ({ statusCode: status, headers, body: JSON.stringify(body) });
 
-  const massive = async (path, params = {}) => {
-    if (!massiveKey) return null;
-    const u = new URL("https://api.massive.com" + path);
-    u.searchParams.set("apiKey", massiveKey);
-    for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined && v !== null && v !== "") u.searchParams.set(k, String(v));
-    }
-    const r = await fetch(u);
-    const text = await r.text();
-    let j = {};
-    try { j = JSON.parse(text); } catch {}
-    if (!r.ok) throw new Error("Massive " + r.status + (j?.error ? ": " + j.error : ""));
-    return j;
-  };
-
-  const alpha = async (params) => {
-    if (!alphaKey) return null;
-    const u = new URL("https://www.alphavantage.co/query");
-    for (const [k, v] of Object.entries({ ...params, apikey: alphaKey })) u.searchParams.set(k, String(v));
-    const r = await fetch(u);
-    const j = await r.json();
-    if (j["Error Message"] || j["Note"] || j["Information"]) throw new Error(j["Error Message"] || j["Note"] || j["Information"]);
-    return j;
-  };
-
-
-  const webullAppKey = String(process.env.WEBULL_APP_KEY || "").trim();
-  const webullAppSecret = String(process.env.WEBULL_APP_SECRET || "").trim();
-  const webullHost = String(process.env.WEBULL_API_HOST || "api.sandbox.webull.com").trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
-
-  const webullRequest = async (path, params = {}, options = {}) => {
-    if (!webullAppKey || !webullAppSecret) {
-      throw new Error("مفاتيح Webull غير مضافة في Netlify: WEBULL_APP_KEY و WEBULL_APP_SECRET");
-    }
-    const crypto = require("crypto");
-    const method = String(options.method || "GET").toUpperCase();
-    const bodyString = options.body ? JSON.stringify(options.body) : "";
-    const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-    const nonce = crypto.randomBytes(16).toString("hex");
-    const signingHeaders = {
-      "x-app-key": webullAppKey,
-      "x-timestamp": timestamp,
-      "x-signature-algorithm": "HMAC-SHA1",
-      "x-signature-version": "1.0",
-      "x-signature-nonce": nonce,
-      "host": webullHost
-    };
-    const all = {...params, ...signingHeaders};
-    const str1 = Object.keys(all).sort().map(k => k + "=" + all[k]).join("&");
-    const bodyHash = bodyString ? crypto.createHash("md5").update(bodyString, "utf8").digest("hex").toUpperCase() : "";
-    const signingText = path + "&" + str1 + (bodyHash ? "&" + bodyHash : "");
-    // Match Python urllib.parse.quote(str3, safe="") used in Webull's official example.
-    const encodedSigningText = encodeURIComponent(signingText)
-      .replace(/[!'()*]/g, ch => "%" + ch.charCodeAt(0).toString(16).toUpperCase());
-    const signature = crypto.createHmac("sha1", webullAppSecret + "&")
-      .update(encodedSigningText, "utf8").digest("base64");
-    const url = new URL("https://" + webullHost + path);
-    for (const [k,v] of Object.entries(params)) {
-      if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
-    }
-    const requestHeaders = {
-      "Accept":"application/json",
-      "x-app-key":webullAppKey,
-      "x-timestamp":timestamp,
-      "x-signature":signature,
-      "x-signature-algorithm":"HMAC-SHA1",
-      "x-signature-version":"1.0",
-      "x-signature-nonce":nonce,
-      "x-version":"v3"
-    };
-    if (bodyString) requestHeaders["Content-Type"] = "application/json";
-    const response = await fetch(url, {
-      method,
-      headers: requestHeaders,
-      ...(bodyString ? {body:bodyString} : {})
-    });
-    const raw = await response.text();
-    let data = {};
-    try { data = JSON.parse(raw); } catch {}
-    if (!response.ok) {
-      const detail = data.message || data.msg || data.error || raw.slice(0, 240);
-      throw new Error("Webull HTTP " + response.status + (detail ? ": " + detail : ""));
-    }
-    return data;
-  };
-
   const dateAgo = days => new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
-
-  const normalize = rows => (rows || []).map(x => ({
-    date: new Date(x.t || x.date).toISOString(),
-    o: Number(x.o), h: Number(x.h), l: Number(x.l), c: Number(x.c), v: Number(x.v || 0)
-  })).filter(x => [x.o,x.h,x.l,x.c].every(Number.isFinite)).sort((a,b) => a.date.localeCompare(b.date));
 
   const yahooBars = async symbol => {
     const end = Math.floor(Date.now()/1000);
@@ -131,7 +38,7 @@ exports.handler = async (event) => {
     const z = j?.chart?.result?.[0];
     if (!z) {
       throw new Error((lastError?.message || "لا توجد بيانات تاريخية من Yahoo") +
-        (massiveKey ? "؛ لم تنجح مصادر الشموع البديلة من Massive" : "؛ مفتاح MASSIVE_API_KEY غير موجود في إعدادات Netlify"));
+        "؛ تحقق من توفر الشموع التاريخية في Yahoo Finance");
     }
 
     const ts = z.timestamp || [];
@@ -216,29 +123,7 @@ exports.handler = async (event) => {
     return map;
   };
 
-  const getBars = async symbol => {
-    let massiveError = null;
-    // Prefer Massive when its API key is configured; use Yahoo only as fallback.
-    if (massiveKey) {
-      try {
-        let mult=1,span="day",days=420,limit=500;
-        if(tf==="1w"){span="week";days=1500;}
-        if(tf==="4h"){mult=4;span="hour";days=120;}
-        const j=await massive("/v2/aggs/ticker/"+encodeURIComponent(symbol)+"/range/"+mult+"/"+span+"/"+dateAgo(days)+"/"+dateAgo(0),{
-          adjusted:"true",sort:"asc",limit
-        });
-        const bars=normalize(j?.results);
-        if(bars.length>=35) return bars;
-        massiveError = new Error("Massive returned fewer than 35 historical bars");
-      } catch(e) { massiveError = e; }
-    }
-    try {
-      return await yahooBars(symbol);
-    } catch (yErr) {
-      if (massiveError) throw new Error("Massive: "+String(massiveError.message||massiveError)+"; "+yErr.message);
-      throw yErr;
-    }
-  };
+  const getBars = async symbol => yahooBars(symbol);
 
   const ema = (a,p) => {
     if(a.length<p) return null;
@@ -300,22 +185,6 @@ exports.handler = async (event) => {
       } catch (e) { lastError = e; }
     }
     throw lastError || new Error("Yahoo fundamentals unavailable");
-  };
-
-  const getReference = async symbol => {
-    if(!massiveKey) return {};
-    try {
-      const j=await massive("/v3/reference/tickers/"+encodeURIComponent(symbol),{});
-      return j?.results || {};
-    } catch { return {}; }
-  };
-
-  const getSplits = async symbol => {
-    if(!massiveKey) return [];
-    try {
-      const j=await massive("/stocks/v1/splits",{ticker:symbol,limit:100,sort:"execution_date.desc"});
-      return j?.results || [];
-    } catch { return []; }
   };
 
   const getShort = async (symbol, ref={}) => {
@@ -432,38 +301,10 @@ exports.handler = async (event) => {
     };
   };
 
-  // Direct search uses Yahoo multi-quote for fundamentals, then the same technical engine.
-  if(String(q.webullTest || "") === "1"){
-    const symbol = requested || "AAPL";
-    let snapshot = null, snapshotError = null, bars = null, barsError = null;
-    try {
-      snapshot = await webullRequest("/market-data/stocks/snapshots/list", {
-        symbols: symbol, category: "US_STOCK",
-        extend_hour_required: "false", overnight_required: "false"
-      });
-    } catch (e) { snapshotError = String(e.message || e); }
-    try {
-      bars = await webullRequest("/market-data/stocks/bars/list", {}, {
-        method: "POST",
-        body: {symbols:[symbol], category:"US_STOCK", timespan:"D", count:5, real_time_required:false}
-      });
-    } catch (e) { barsError = String(e.message || e); }
-    const ok = snapshot !== null || bars !== null;
-    return out(ok ? 200 : 502, {
-      ok, source: "Webull OpenAPI", environment: webullHost, symbol,
-      snapshot, snapshotError, bars, barsError,
-      credentialsConfigured: Boolean(webullAppKey && webullAppSecret),
-      appKeyLength: webullAppKey.length,
-      hostConfigured: webullHost,
-      note: "اختبار منفصل لواجهة اللقطات وواجهة الشموع؛ لا يعرض مفاتيح API. إذا استمر خطأ التوقيع بعد هذا الإصلاح، راجع تطابق App Key وApp Secret مع بيئة Sandbox."
-    });
-  }
-
   if(requested){
     try{
       let ref={};
       try { const qmap=await yahooQuotes([requested]); ref=qmap.get(requested)||{}; } catch {}
-      if(!Object.keys(ref).length) ref=await getReference(requested);
       if (!(Number(ref.sharesOutstanding??ref.shares_outstanding??ref.share_class_shares_outstanding)>0) || !(Number(ref.marketCap??ref.market_cap)>0)) {
         try { ref={...ref,...await yahooFundamentals(requested)}; } catch {}
       }
@@ -486,74 +327,10 @@ exports.handler = async (event) => {
       for(const [k,v] of qmap) referenceMap.set(k,v);
       diagnostics.yahooQuotes=qmap.size;
     }catch(e){diagnostics.quoteError=String(e.message||e);}
-  } else if(massiveKey){
-    try{
-      // Grouped Daily is one bulk request for the whole US market and is included in all Stocks plans.
-      // Only retry the last 3 calendar days to find the latest trading day; never burn 14 requests.
-      let grouped=null,usedDate=null,lastError=null;
-      for(let back=0;back<3&&!grouped;back++){
-        const d=new Date(Date.now()-back*86400000).toISOString().slice(0,10);
-        try{
-          const j=await massive("/v2/aggs/grouped/locale/us/market/stocks/"+d,{adjusted:"true",include_otc:"true"});
-          if(Array.isArray(j?.results)&&j.results.length){grouped=j;usedDate=d;}
-        }catch(e){lastError=String(e.message||e);}
-      }
-
-      const rows=(grouped?.results||[]).map(x=>({
-        symbol:String(x.T||"").toUpperCase(),price:Number(x.c),volume:Number(x.v||0)
-      })).filter(x=>/^[A-Z][A-Z0-9.\-]{0,7}$/.test(x.symbol)&&Number.isFinite(x.price));
-
-      diagnostics.snapshot=rows.length;
-      diagnostics.groupedDate=usedDate;
-      if(!rows.length) throw new Error("Grouped Daily لم يرجع بيانات. آخر خطأ: "+(lastError||"غير معروف"));
-
-      const pv=rows.filter(x=>x.price>=1&&x.price<=8&&x.volume>=100000)
-        .sort((a,b)=>b.volume-a.volume);
-      diagnostics.priceVolume=pv.length;
-
-      // First try Yahoo's batch quotes; if blocked (401/403), use Massive's own reference API
-      // for a small batch so the scanner still works on the free 5-requests/minute tier.
-      const candidateRows=pv.slice(0,500);
-      let candidates=[];
-      try {
-        const qmap=await yahooQuotes(candidateRows.map(x=>x.symbol));
-        diagnostics.yahooQuotes=qmap.size;
-        for(const row of candidateRows){
-          const r=qmap.get(row.symbol);
-          if(!r) continue;
-          referenceMap.set(row.symbol,{...r,regularMarketPrice:r.regularMarketPrice??row.price,regularMarketVolume:r.regularMarketVolume??row.volume});
-          candidates.push(row);
-        }
-      } catch(e) {
-        diagnostics.yahooQuotes=0;
-        diagnostics.yahooQuoteFallbackError=String(e.message||e);
-      }
-      // If Yahoo quotes are blocked, check the five highest-volume candidates against Massive reference data.
-      // Five requests match Massive Basic's published rate limit.
-      if(!candidates.length) {
-        const refs=[];
-        for(const row of pv.slice(0,5)) {
-          try {
-            const ref=await getReference(row.symbol);
-            if(ref && Object.keys(ref).length) {
-              const merged={...ref,regularMarketPrice:row.price,regularMarketVolume:row.volume};
-              referenceMap.set(row.symbol,merged);
-              refs.push(row);
-            } else diagnostics["reference_"+row.symbol]="Massive returned no reference fields";
-          } catch(e) { diagnostics["reference_"+row.symbol]=String(e.message||e); }
-        }
-        candidates=refs;
-        diagnostics.referenceFallbackCandidates=refs.length;
-      }
-      diagnostics.referenceChecked=candidates.length;
-      diagnostics.eligibleCandidates=candidates.length;
-      symbols=candidates.sort((a,b)=>b.volume-a.volume).slice(0,30).map(x=>x.symbol);
-    }catch(e){
-      diagnostics.error=String(e.message||e);
-    }
   }
 
-  if(!symbols.length && !massiveKey && !configured.length){
+
+  if(!symbols.length && !configured.length){
     try {
       const ids=["most_actives","day_gainers","small_cap_gainers"];
       const seen=new Map();
@@ -595,7 +372,7 @@ exports.handler = async (event) => {
   }
 
   // Last-resort universe: still run the technical engine if Yahoo's predefined screeners are unavailable.
-  if(!symbols.length && !massiveKey && !configured.length){
+  if(!symbols.length && !configured.length){
     symbols=[...new Set([
       "NTCL","PN","FEMY","AMIX","SILO","PRFX","DXST","INUV","BGL","ATPC",
       "MTEN","AMOD","PTLE","SMSI","CETX","WXM","ICCM","VRAX","ORIS","YYGH",
@@ -605,10 +382,8 @@ exports.handler = async (event) => {
   }
 
   if(!symbols.length){
-    if(!massiveKey && !configured.length) {
-      diagnostics.message = "مفتاح MASSIVE_API_KEY غير موجود في إعدادات Netlify، وYahoo لا يعيد قائمة أسعار موثوقة. أضف المفتاح في إعدادات موقع النشر الصحيح ثم أعد النشر.";
-    }
-    return out(200,{stocks:[],errors:["لم تصل قائمة أسهم من مزود البيانات: "+JSON.stringify(diagnostics)],universeCount:0,source:massiveKey?"Massive + Yahoo":"لا يوجد مزود بيانات مهيأ",tf,diagnostics});
+    diagnostics.message = "Yahoo Finance لم يُرجع قائمة أسهم قابلة للتحليل في هذه المحاولة.";
+    return out(200,{stocks:[],errors:["لم تصل قائمة أسهم من Yahoo Finance: "+JSON.stringify(diagnostics)],universeCount:0,source:"Yahoo Finance",tf,diagnostics});
   }
 
   const results=[],errors=[];
@@ -659,7 +434,7 @@ exports.handler = async (event) => {
     stocks:eligible,
     errors:errors.slice(0,12),
     universeCount:symbols.length,
-    source:massiveKey?"Massive + Yahoo":"Yahoo Finance",
+    source:"Yahoo Finance",
     tf,
     updated:new Date().toLocaleString("ar-SA"),
     diagnostics
