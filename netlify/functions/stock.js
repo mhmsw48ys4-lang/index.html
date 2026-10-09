@@ -635,7 +635,15 @@ exports.handler = async (event) => {
   }
 
   const beforeLimits=results.length;
-  const eligible=results.filter(x=>Number.isFinite(Number(x.marketCap))&&Number(x.marketCap)>0&&Number(x.marketCap)<10000000&&Number.isFinite(Number(x.sharesOutstanding))&&Number(x.sharesOutstanding)>0&&Number(x.sharesOutstanding)<5000000);
+  const eligible=results.filter(x=>{
+    const cap=Number(x.marketCap), shares=Number(x.sharesOutstanding);
+    const capKnown=Number.isFinite(cap)&&cap>0;
+    const sharesKnown=Number.isFinite(shares)&&shares>0;
+    // Exclude only when a reported value proves the stock is outside the requested limits.
+    if(capKnown&&cap>=10000000) return false;
+    if(sharesKnown&&shares>=5000000) return false;
+    return true;
+  });
   diagnostics.rejectedByMicrocapLimits=beforeLimits-eligible.length;
   diagnostics.rejectedMissingMarketCap=results.filter(x=>!(Number.isFinite(Number(x.marketCap))&&Number(x.marketCap)>0)).length;
   diagnostics.rejectedMissingShares=results.filter(x=>!(Number.isFinite(Number(x.sharesOutstanding))&&Number(x.sharesOutstanding)>0)).length;
