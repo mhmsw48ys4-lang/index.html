@@ -295,8 +295,9 @@ exports.handler = async (event) => {
   // Direct search uses Yahoo multi-quote for fundamentals, then the same technical engine.
   if(requested){
     try{
-      const qmap=await yahooQuotes([requested]);
-      const ref=qmap.get(requested)||await getReference(requested);
+      let ref={};
+      try { const qmap=await yahooQuotes([requested]); ref=qmap.get(requested)||{}; } catch {}
+      if(!Object.keys(ref).length) ref=await getReference(requested);
       const x=await buildOne(requested,ref);
       return out(200,{stocks:[x],errors:[],universeCount:1,source:"Yahoo Finance",tf,updated:new Date().toLocaleString("ar-SA")});
     }catch(e){
@@ -384,11 +385,27 @@ exports.handler = async (event) => {
       const rows=[...seen.values()].sort((a,b)=>b.volume-a.volume).slice(0,30);
       diagnostics.yahooScreenerCandidates=rows.length;
       if(rows.length){
-        const qmap=await yahooQuotes(rows.map(x=>x.symbol));
-        for(const [k,v] of qmap) referenceMap.set(k,v);
+        try {
+          const qmap=await yahooQuotes(rows.map(x=>x.symbol));
+          for(const [k,v] of qmap) referenceMap.set(k,v);
+          diagnostics.yahooQuotes=qmap.size;
+        } catch(e) {
+          diagnostics.yahooQuoteFallbackError=String(e.message||e);
+        }
+        // Keep screener symbols even if Yahoo's separate quote endpoint rejects requests.
         symbols=rows.map(x=>x.symbol);
       }
     } catch(e) { diagnostics.yahooScreenerError=String(e.message||e); }
+  }
+
+  // Last-resort universe: still run the technical engine if Yahoo's predefined screeners are unavailable.
+  if(!symbols.length && !massiveKey && !configured.length){
+    symbols=[
+      "NTCL","PN","FEMY","AMIX","SILO","PRFX","DXST","INUV","BGL","ATPC",
+      "MTEN","AMOD","PTLE","SMSI","CETX","WXM","ICCM","VRAX","ORIS","YYGH",
+      "FCUV","ASBP","AIX","JZ","CRE","SSM","CDLX","PMI","GDC","BMGL"
+    ];
+    diagnostics.universeFallback="configured safety list; live price/volume filters still apply";
   }
 
   if(!symbols.length){
