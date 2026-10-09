@@ -402,7 +402,7 @@ exports.handler = async (event) => {
             const symbol=String(q.symbol||"").toUpperCase();
             const price=Number(q.regularMarketPrice);
             const volume=Number(q.regularMarketVolume||q.averageDailyVolume3Month||0);
-            if(/^[A-Z][A-Z0-9.\\-]{0,7}$/.test(symbol)&&price>=1&&price<=8&&volume>=100000){
+            if(/^[A-Z][A-Z0-9.\\-]{0,7}$/.test(symbol)&&price>=1&&price<=8){
               const prior=seen.get(symbol);
               // Keep the full screener record: its marketCap/fundamental fields may be present
               // even when Yahoo's separate /v7/finance/quote endpoint is blocked.
