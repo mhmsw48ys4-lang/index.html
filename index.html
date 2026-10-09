@@ -66,7 +66,7 @@ button,input,select{font:inherit}.app{max-width:820px;margin:auto;padding:14px 1
     </div>
   </div>
 
-  <div class="resultshead"><b>الأسهم المطابقة للفلاتر <span id="count">0</span></b><select class="sort" id="sort"><option value="score">الدرجة الأعلى</option><option value="rvol">RVOL</option></select></div>
+  <div class="resultshead"><b>أسهم المايكرو كاب والتقسيمات <span id="count">0</span></b><select class="sort" id="sort"><option value="split">التقسيمات أولاً</option><option value="score">الدرجة الأعلى</option><option value="rvol">RVOL</option></select></div>
   <div id="results"><div class="empty">اضغط «تحديث» لجلب البيانات</div></div>
 
   <div id="detail" class="detail"></div>
@@ -111,7 +111,7 @@ function render(){
  if(sd==="nosplit") a=a.filter(x=>!x.splitDate);
  if(["100","50","30"].includes(sd)) a=a.filter(x=>x.splitDate&&x.splitDays!=null&&x.splitDays<=Number(sd));
  const s=$("sort").value;
- a.sort((x,y)=>s==="rvol"?y.rvol-x.rvol:y.score-x.score);
+ a.sort((x,y)=>{if(s==="split"){const xs=x.splitDate?1:0,ys=y.splitDate?1:0;if(xs!==ys)return ys-xs;if(x.splitDate&&y.splitDate)return Number(x.splitDays||999)-Number(y.splitDays||999);}return s==="rvol"?Number(y.rvol||0)-Number(x.rvol||0):Number(y.score||0)-Number(x.score||0);});
  $("count").textContent=a.length;
  $("ready").textContent=a.filter(x=>x.score>=90).length;
  $("near").textContent=a.filter(x=>x.score>=70&&x.score<90).length;
