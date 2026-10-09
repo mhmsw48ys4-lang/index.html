@@ -236,6 +236,8 @@ exports.handler = async (event) => {
     if(volumeImproving)score+=10; else if(rv>=1)score+=5;
     if(stability>=4)score+=10; else if(stability>=3)score+=7; else if(stability>=2)score+=4;
     if(rebound)score+=10;
+    // RSI 0-35 is preferred near-pivot context, not a mandatory entry signal.
+    if(rr!=null&&rr>=0&&rr<=35)score+=5;
     if(resistance>last.c*1.15)score+=5;
     if(last.v>=500000)score+=5;
 
@@ -322,7 +324,7 @@ exports.handler = async (event) => {
       diagnostics.groupedDate=usedDate;
       if(!rows.length) throw new Error("Grouped Daily لم يرجع بيانات. آخر خطأ: "+(lastError||"غير معروف"));
 
-      const pv=rows.filter(x=>x.price>=1&&x.price<=10&&x.volume>=100000)
+      const pv=rows.filter(x=>x.price>=1&&x.price<=8&&x.volume>=100000)
         .sort((a,b)=>b.volume-a.volume);
       diagnostics.priceVolume=pv.length;
 
