@@ -79,7 +79,10 @@ exports.handler = async (event) => {
     const raw = await response.text();
     let data = {};
     try { data = JSON.parse(raw); } catch {}
-    if (!response.ok) throw new Error("Webull HTTP " + response.status + (data.message ? ": " + data.message : ""));
+    if (!response.ok) {
+      const detail = data.message || data.msg || data.error || raw.slice(0, 240);
+      throw new Error("Webull HTTP " + response.status + (detail ? ": " + detail : ""));
+    }
     return data;
   };
 
@@ -440,18 +443,26 @@ exports.handler = async (event) => {
 
   // Direct search uses Yahoo multi-quote for fundamentals, then the same technical engine.
   if(String(q.webullTest || "") === "1"){
+    const symbol = requested || "AAPL";
+    let snapshot = null, snapshotError = null, bars = null, barsError = null;
     try {
-      const symbol = requested || "AAPL";
-      const data = await webullRequest("/market-data/stocks/snapshots/list", {
-        symbols: symbol,
-        category: "US_STOCK",
-        extend_hour_required: "false",
-        overnight_required: "false"
+      snapshot = await webullRequest("/market-data/stocks/snapshots/list", {
+        symbols: symbol, category: "US_STOCK",
+        extend_hour_required: "false", overnight_required: "false"
       });
-      return out(200, {ok:true, source:"Webull OpenAPI", environment:webullHost, symbol, data});
-    } catch (e) {
-      return out(502, {ok:false, source:"Webull OpenAPI", environment:webullHost, error:String(e.message || e)});
-    }
+    } catch (e) { snapshotError = String(e.message || e); }
+    try {
+      bars = await webullRequest("/market-data/stocks/bars/get", {
+        symbol, category: "US_STOCK", interval: "D", count: "5",
+        real_time_required: "false"
+      });
+    } catch (e) { barsError = String(e.message || e); }
+    const ok = snapshot !== null || bars !== null;
+    return out(ok ? 200 : 502, {
+      ok, source: "Webull OpenAPI", environment: webullHost, symbol,
+      snapshot, snapshotError, bars, barsError,
+      note: "اختبار منفصل لواجهة اللقطات وواجهة الشموع؛ لا يعرض مفاتيح API."
+    });
   }
 
   if(requested){
