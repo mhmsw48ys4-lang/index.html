@@ -43,11 +43,13 @@ exports.handler = async (event) => {
   const webullAppSecret = process.env.WEBULL_APP_SECRET;
   const webullHost = process.env.WEBULL_API_HOST || "api.sandbox.webull.com";
 
-  const webullRequest = async (path, params = {}) => {
+  const webullRequest = async (path, params = {}, options = {}) => {
     if (!webullAppKey || !webullAppSecret) {
       throw new Error("مفاتيح Webull غير مضافة في Netlify: WEBULL_APP_KEY و WEBULL_APP_SECRET");
     }
     const crypto = require("crypto");
+    const method = String(options.method || "GET").toUpperCase();
+    const bodyString = options.body ? JSON.stringify(options.body) : "";
     const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
     const nonce = crypto.randomBytes(16).toString("hex");
     const signingHeaders = {
@@ -60,13 +62,15 @@ exports.handler = async (event) => {
     };
     const all = {...params, ...signingHeaders};
     const str1 = Object.keys(all).sort().map(k => k + "=" + all[k]).join("&");
-    const encoded = encodeURIComponent(path + "&" + str1);
-    const signature = crypto.createHmac("sha1", webullAppSecret + "&").update(encoded, "utf8").digest("base64");
+    const bodyHash = bodyString ? crypto.createHash("md5").update(bodyString, "utf8").digest("hex").toUpperCase() : "";
+    const signingText = path + "&" + str1 + (bodyHash ? "&" + bodyHash : "");
+    const signature = crypto.createHmac("sha1", webullAppSecret + "&")
+      .update(encodeURIComponent(signingText), "utf8").digest("base64");
     const url = new URL("https://" + webullHost + path);
     for (const [k,v] of Object.entries(params)) {
       if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
     }
-    const response = await fetch(url, {headers: {
+    const requestHeaders = {
       "Accept":"application/json",
       "x-app-key":webullAppKey,
       "x-timestamp":timestamp,
@@ -75,7 +79,13 @@ exports.handler = async (event) => {
       "x-signature-version":"1.0",
       "x-signature-nonce":nonce,
       "x-version":"v3"
-    }});
+    };
+    if (bodyString) requestHeaders["Content-Type"] = "application/json";
+    const response = await fetch(url, {
+      method,
+      headers: requestHeaders,
+      ...(bodyString ? {body:bodyString} : {})
+    });
     const raw = await response.text();
     let data = {};
     try { data = JSON.parse(raw); } catch {}
@@ -122,12 +132,9 @@ exports.handler = async (event) => {
         try {
           const interval = tf === "1w" ? "W" : tf === "4h" ? "M240" : "D";
           const count = tf === "1w" ? "700" : "420";
-          const wb = await webullRequest("/market-data/stocks/bars/list", {
-            symbols: JSON.stringify([symbol]),
-            category: "US_STOCK",
-            timespan: interval,
-            count,
-            real_time_required: "true"
+          const wb = await webullRequest("/market-data/stocks/bars/list", {}, {
+            method: "POST",
+            body: {symbols:[symbol], category:"US_STOCK", timespan:interval, count:Number(count), real_time_required:true}
           });
           // Batch endpoint wraps each symbol in its own result object.
           const wrapped = Array.isArray(wb?.result) ? wb.result : Array.isArray(wb?.data) ? wb.data : [];
@@ -456,9 +463,9 @@ exports.handler = async (event) => {
       });
     } catch (e) { snapshotError = String(e.message || e); }
     try {
-      bars = await webullRequest("/market-data/stocks/bars/list", {
-        symbols: JSON.stringify([symbol]), category: "US_STOCK",
-        timespan: "D", count: "5", real_time_required: "false"
+      bars = await webullRequest("/market-data/stocks/bars/list", {}, {
+        method: "POST",
+        body: {symbols:[symbol], category:"US_STOCK", timespan:"D", count:5, real_time_required:false}
       });
     } catch (e) { barsError = String(e.message || e); }
     const ok = snapshot !== null || bars !== null;
