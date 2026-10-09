@@ -100,6 +100,18 @@ exports.handler = async (event) => {
     return r4;
   };
 
+  const yahooScreener = async screenId => {
+    const u = new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
+    u.searchParams.set("formatted","false");
+    u.searchParams.set("scrIds",screenId);
+    u.searchParams.set("count","250");
+    u.searchParams.set("start","0");
+    const r = await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
+    if(!r.ok) throw new Error("Yahoo screener "+r.status);
+    const j = await r.json();
+    return j?.finance?.result?.[0]?.quotes || [];
+  };
+
   const yahooQuotes = async symbols => {
     const map=new Map();
     for(let i=0;i<symbols.length;i+=100){
@@ -335,27 +347,52 @@ exports.handler = async (event) => {
       diagnostics.yahooQuotes=qmap.size;
       diagnostics.referenceChecked=qmap.size;
 
-      const micro=[];
+      const candidates=[];
       for(const row of candidateRows){
         const r=qmap.get(row.symbol);
         if(!r) continue;
-        const shares=Number(r.sharesOutstanding);
-        const marketCap=Number(r.marketCap);
-        if(Number.isFinite(marketCap)&&marketCap>0&&marketCap<=10000000&&
-           Number.isFinite(shares)&&shares>0&&shares<=10000000){
-          referenceMap.set(row.symbol,r);
-          micro.push({...row,marketCap,shares});
-        }
+        referenceMap.set(row.symbol,r);
+        candidates.push(row);
       }
-      diagnostics.microcaps=micro.length;
-      symbols=micro.sort((a,b)=>b.volume-a.volume).slice(0,30).map(x=>x.symbol);
+      diagnostics.eligibleCandidates=candidates.length;
+      // Do not incorrectly discard stocks solely because their market cap or share count exceeds an arbitrary $10M cap.
+      symbols=candidates.sort((a,b)=>b.volume-a.volume).slice(0,30).map(x=>x.symbol);
     }catch(e){
       diagnostics.error=String(e.message||e);
     }
   }
 
+  if(!symbols.length && !massiveKey && !configured.length){
+    try {
+      const ids=["most_actives","day_gainers","small_cap_gainers"];
+      const seen=new Map();
+      for(const id of ids){
+        try {
+          const quotes=await yahooScreener(id);
+          diagnostics["screener_"+id]=quotes.length;
+          for(const q of quotes){
+            const symbol=String(q.symbol||"").toUpperCase();
+            const price=Number(q.regularMarketPrice);
+            const volume=Number(q.regularMarketVolume||q.averageDailyVolume3Month||0);
+            if(/^[A-Z][A-Z0-9.\\-]{0,7}$/.test(symbol)&&price>=1&&price<=8&&volume>=100000){
+              const prior=seen.get(symbol);
+              if(!prior||volume>prior.volume) seen.set(symbol,{symbol,price,volume});
+            }
+          }
+        } catch(e) { diagnostics["screenerError_"+id]=String(e.message||e); }
+      }
+      const rows=[...seen.values()].sort((a,b)=>b.volume-a.volume).slice(0,30);
+      diagnostics.yahooScreenerCandidates=rows.length;
+      if(rows.length){
+        const qmap=await yahooQuotes(rows.map(x=>x.symbol));
+        for(const [k,v] of qmap) referenceMap.set(k,v);
+        symbols=rows.map(x=>x.symbol);
+      }
+    } catch(e) { diagnostics.yahooScreenerError=String(e.message||e); }
+  }
+
   if(!symbols.length){
-    return out(200,{stocks:[],errors:["لم يجد الفاحص أسهماً مطابقة بعد مرحلة السعر/الحجم/القيمة السوقية","تشخيص: "+JSON.stringify(diagnostics)],universeCount:0,source:massiveKey?"Massive + Yahoo":"Yahoo Finance",tf,diagnostics});
+    return out(200,{stocks:[],errors:["لم تصل قائمة أسهم من مزود البيانات. راجع تشخيص المصدر: "+JSON.stringify(diagnostics)],universeCount:0,source:massiveKey?"Massive + Yahoo":"Yahoo Finance",tf,diagnostics});
   }
 
   const results=[],errors=[];
@@ -372,8 +409,6 @@ exports.handler = async (event) => {
           }catch{}
         }
         const x=await buildOne(symbol,ref||{});
-        const cap=Number(x.marketCap),shares=Number(x.sharesOutstanding);
-        if(!(cap>0&&cap<=10000000&&shares>0&&shares<=10000000)) return null;
         diagnostics.bars++;
         return x;
       }catch(e){errors.push(symbol+": "+e.message);return null;}
