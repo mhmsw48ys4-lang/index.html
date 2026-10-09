@@ -125,7 +125,13 @@ async function load(){
    if(!r.ok) throw new Error("تعذر الاتصال بوظيفة البيانات");
    const j=await r.json(); state.data=j.stocks||[];
    $("lastScan").textContent=(j.updated||new Date().toLocaleTimeString("ar-SA"))+(j.source?" · "+j.source:"");
-   if(!state.data.length && j.errors?.length){ $("results").innerHTML=`<div class="card empty">⚠️ لم تصل بيانات قابلة للفحص.<br><small>${esc(j.errors.join(" | "))}</small></div>`; return; }
+   if(!state.data.length){
+    const diag=j.diagnostics||{};
+    const detail=diag.message||"لم يتم العثور على أسهم اجتازت الشروط.";
+    const stats="الرموز: "+(j.universeCount??0)+" | شموع تم تحليلها: "+(diag.bars??0)+" | مستبعدة بسبب حدود القيمة/الأسهم: "+(diag.rejectedByMicrocapLimits??0)+" | أسعار Yahoo: "+(diag.yahooQuotes??0);
+    $("results").innerHTML=`<div class="card empty">⚠️ ${esc(detail)}<br><small>${esc(stats)}<br>${esc((j.errors||[]).join(" | "))}</small></div>`;
+    return;
+   }
    render();
  }catch(e){
    $("results").innerHTML=`<div class="card empty">⚠️ ${esc(e.message)}<br><small>تأكد من إعداد مفاتيح API في Netlify ثم أعد المحاولة.</small></div>`;
