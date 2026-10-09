@@ -107,15 +107,23 @@ exports.handler = async (event) => {
   };
 
   const yahooScreener = async screenId => {
-    const u = new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
-    u.searchParams.set("formatted","false");
-    u.searchParams.set("scrIds",screenId);
-    u.searchParams.set("count","250");
-    u.searchParams.set("start","0");
-    const r = await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
-    if(!r.ok) throw new Error("Yahoo screener "+r.status);
-    const j = await r.json();
-    return j?.finance?.result?.[0]?.quotes || [];
+    let lastError=null;
+    for(const host of ["query1.finance.yahoo.com","query2.finance.yahoo.com"]) {
+      const u = new URL("https://"+host+"/v1/finance/screener/predefined/saved");
+      u.searchParams.set("formatted","false");
+      u.searchParams.set("scrIds",screenId);
+      u.searchParams.set("count","250");
+      u.searchParams.set("start","0");
+      try {
+        const response=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0","Accept":"application/json"}});
+        if(!response.ok){lastError=new Error("Yahoo screener "+response.status+" ("+host+")");continue;}
+        const j=await response.json();
+        const quotes=j?.finance?.result?.[0]?.quotes;
+        if(Array.isArray(quotes)) return quotes;
+        lastError=new Error("Yahoo screener لم يرجع قائمة أسهم");
+      } catch(e){lastError=e;}
+    }
+    throw(lastError||new Error("Yahoo screener unavailable"));
   };
 
   const yahooQuotes = async symbols => {
@@ -395,7 +403,9 @@ exports.handler = async (event) => {
             const volume=Number(q.regularMarketVolume||q.averageDailyVolume3Month||0);
             if(/^[A-Z][A-Z0-9.\\-]{0,7}$/.test(symbol)&&price>=1&&price<=8&&volume>=100000){
               const prior=seen.get(symbol);
-              if(!prior||volume>prior.volume) seen.set(symbol,{symbol,price,volume});
+              // Keep the full screener record: its marketCap/fundamental fields may be present
+              // even when Yahoo's separate /v7/finance/quote endpoint is blocked.
+              if(!prior||volume>prior.volume) seen.set(symbol,{...q,symbol,price,volume});
             }
           }
         } catch(e) { diagnostics["screenerError_"+id]=String(e.message||e); }
@@ -403,10 +413,13 @@ exports.handler = async (event) => {
       const rows=[...seen.values()].sort((a,b)=>b.volume-a.volume).slice(0,20);
       for(const symbol of splitWatchSymbols){if(!seen.has(symbol))rows.push({symbol,price:null,volume:0,splitWatch:true});}
       diagnostics.yahooScreenerCandidates=rows.length;
+      // Seed fundamentals from screener records before trying the often-blocked quote endpoint.
+      for(const row of rows) referenceMap.set(row.symbol,row);
+      diagnostics.screenerFundamentals=rows.filter(x=>Number(x.marketCap||x.market_cap)>0).length;
       if(rows.length){
         try {
           const qmap=await yahooQuotes(rows.map(x=>x.symbol));
-          for(const [k,v] of qmap) referenceMap.set(k,v);
+          for(const [k,v] of qmap) referenceMap.set(k,{...(referenceMap.get(k)||{}),...v});
           diagnostics.yahooQuotes=qmap.size;
         } catch(e) {
           diagnostics.yahooQuoteFallbackError=String(e.message||e);
