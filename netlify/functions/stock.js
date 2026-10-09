@@ -51,18 +51,24 @@ exports.handler = async (event) => {
     if (tf === "1w") { days = 1500; interval = "1wk"; }
     if (tf === "4h") { days = 60; interval = "60m"; }
 
-    const u = new URL("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol));
-    u.searchParams.set("period1", String(end - days * 86400));
-    u.searchParams.set("period2", String(end));
-    u.searchParams.set("interval", interval);
-    u.searchParams.set("events", "div,splits");
-    u.searchParams.set("includeAdjustedClose", "true");
-
-    const r = await fetch(u, { headers: { "User-Agent": "Mozilla/5.0" } });
-    if (!r.ok) throw new Error("Yahoo " + r.status);
-    const j = await r.json();
+    let j=null, lastError=null;
+    for (const host of ["query1.finance.yahoo.com","query2.finance.yahoo.com"]) {
+      const u = new URL("https://" + host + "/v8/finance/chart/" + encodeURIComponent(symbol));
+      u.searchParams.set("period1", String(end - days * 86400));
+      u.searchParams.set("period2", String(end));
+      u.searchParams.set("interval", interval);
+      u.searchParams.set("events", "div,splits");
+      u.searchParams.set("includeAdjustedClose", "true");
+      try {
+        const response = await fetch(u, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" } });
+        if (!response.ok) { lastError = new Error("Yahoo " + response.status + " (" + host + ")"); continue; }
+        const candidate = await response.json();
+        if (candidate?.chart?.result?.[0]) { j=candidate; break; }
+        lastError = new Error(candidate?.chart?.error?.description || "Yahoo لم يرجع بيانات تاريخية");
+      } catch(e) { lastError=e; }
+    }
     const z = j?.chart?.result?.[0];
-    if (!z) throw new Error(j?.chart?.error?.description || "لا توجد بيانات سعر");
+    if (!z) throw new Error(lastError?.message || "لا توجد بيانات سعر من Yahoo");
 
     const ts = z.timestamp || [];
     const qv = z.indicators?.quote?.[0] || {};
@@ -117,14 +123,22 @@ exports.handler = async (event) => {
     for(let i=0;i<symbols.length;i+=100){
       const batch=symbols.slice(i,i+100);
       if(!batch.length) continue;
-      const u=new URL("https://query1.finance.yahoo.com/v7/finance/quote");
-      u.searchParams.set("symbols",batch.join(","));
-      u.searchParams.set("formatted","false");
-      u.searchParams.set("region","US");
-      u.searchParams.set("lang","en-US");
-      const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});
-      if(!r.ok) throw new Error("Yahoo quote "+r.status);
-      const j=await r.json();
+      let j=null, lastError=null;
+      for(const host of ["query1.finance.yahoo.com","query2.finance.yahoo.com"]) {
+        const u=new URL("https://"+host+"/v7/finance/quote");
+        u.searchParams.set("symbols",batch.join(","));
+        u.searchParams.set("formatted","false");
+        u.searchParams.set("region","US");
+        u.searchParams.set("lang","en-US");
+        try {
+          const response=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0","Accept":"application/json"}});
+          if(!response.ok){lastError=new Error("Yahoo quote "+response.status+" ("+host+")");continue;}
+          const candidate=await response.json();
+          if(Array.isArray(candidate?.quoteResponse?.result)){j=candidate;break;}
+          lastError=new Error("Yahoo quote لم يرجع قائمة أسعار");
+        } catch(e){lastError=e;}
+      }
+      if(!j) throw (lastError||new Error("Yahoo quote unavailable"));
       for(const x of (j?.quoteResponse?.result||[])) map.set(String(x.symbol||"").toUpperCase(),x);
     }
     return map;
@@ -443,6 +457,12 @@ exports.handler = async (event) => {
   diagnostics.rejectedByMicrocapLimits=beforeLimits-eligible.length;
   eligible.sort((a,b)=>{const as=a.splitDate&&Number(a.splitDays)<=100?1:0,bs=b.splitDate&&Number(b.splitDays)<=100?1:0;if(bs!==as)return bs-as;if(a.splitDate&&!b.splitDate)return -1;if(b.splitDate&&!a.splitDate)return 1;return Number(b.score||0)-Number(a.score||0);});
 
+  if(!eligible.length) {
+    diagnostics.fundamentalsMissing=beforeLimits>0?beforeLimits-diagnostics.rejectedByMicrocapLimits:0;
+    diagnostics.message=beforeLimits===0
+      ?"لم تصل شموع سعرية قابلة للتحليل من مصادر البيانات."
+      :"وصلت بيانات فنية لـ"+beforeLimits+" سهم، لكن لم يتبقَّ سهم بعد تطبيق شرطي القيمة السوقية الأقل من 10 ملايين دولار وعدد الأسهم الأقل من 5 ملايين. غالباً بيانات القيمة السوقية/الأسهم غير متاحة أو لم تطابق الحدود.";
+  }
   return out(200,{
     stocks:eligible,
     errors:errors.slice(0,12),
