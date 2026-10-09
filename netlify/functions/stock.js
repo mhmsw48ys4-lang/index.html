@@ -247,20 +247,27 @@ exports.handler = async (event) => {
   };
 
   const getBars = async symbol => {
+    let massiveError = null;
+    // Prefer Massive when its API key is configured; use Yahoo only as fallback.
+    if (massiveKey) {
+      try {
+        let mult=1,span="day",days=420,limit=500;
+        if(tf==="1w"){span="week";days=1500;}
+        if(tf==="4h"){mult=4;span="hour";days=120;}
+        const j=await massive("/v2/aggs/ticker/"+encodeURIComponent(symbol)+"/range/"+mult+"/"+span+"/"+dateAgo(days)+"/"+dateAgo(0),{
+          adjusted:"true",sort:"asc",limit
+        });
+        const bars=normalize(j?.results);
+        if(bars.length>=35) return bars;
+        massiveError = new Error("Massive returned fewer than 35 historical bars");
+      } catch(e) { massiveError = e; }
+    }
     try {
       return await yahooBars(symbol);
     } catch (yErr) {
-      if (!massiveKey) throw yErr;
-      let mult=1,span="day",days=420,limit=500;
-      if(tf==="1w"){span="week";days=1500;}
-      if(tf==="4h"){mult=4;span="hour";days=120;}
-      const j=await massive("/v2/aggs/ticker/"+encodeURIComponent(symbol)+"/range/"+mult+"/"+span+"/"+dateAgo(days)+"/"+dateAgo(0),{
-        adjusted:"true",sort:"asc",limit
-      });
-      const bars=normalize(j?.results);
-      if(bars.length>=35) return bars;
+      if (massiveError) throw new Error("Massive: "+String(massiveError.message||massiveError)+"; "+yErr.message);
       throw yErr;
-    };
+    }
   };
 
   const ema = (a,p) => {
