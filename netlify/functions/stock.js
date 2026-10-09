@@ -113,7 +113,39 @@ exports.handler = async (event) => {
       } catch(e) { lastError=e; }
     }
     const z = j?.chart?.result?.[0];
-    if (!z) throw new Error(lastError?.message || "لا توجد بيانات سعر من Yahoo");
+    if (!z) {
+      // Fallback to Webull OpenAPI historical bars when Yahoo chart data is unavailable.
+      if (webullAppKey && webullAppSecret) {
+        try {
+          const interval = tf === "1w" ? "W" : tf === "4h" ? "M240" : "D";
+          const count = tf === "1w" ? "700" : "420";
+          const wb = await webullRequest("/market-data/stocks/bars/get", {
+            symbol,
+            category: "US_STOCK",
+            interval,
+            count,
+            real_time_required: "true"
+          });
+          const rows = Array.isArray(wb?.result) ? wb.result : Array.isArray(wb?.data) ? wb.data : [];
+          const bars = rows.map(x => ({
+            date: new Date(x.time || x.timestamp || x.t).toISOString(),
+            o: Number(x.open ?? x.o),
+            h: Number(x.high ?? x.h),
+            l: Number(x.low ?? x.l),
+            c: Number(x.close ?? x.c),
+            v: Number(x.volume ?? x.v ?? 0)
+          })).filter(x => [x.o,x.h,x.l,x.c].every(Number.isFinite))
+            .sort((a,b) => a.date.localeCompare(b.date));
+          if (bars.length) {
+            bars._splits = [];
+            return bars;
+          }
+        } catch (webullError) {
+          lastError = new Error((lastError?.message || "Yahoo data unavailable") + "; Webull fallback: " + String(webullError.message || webullError));
+        }
+      }
+      throw new Error(lastError?.message || "لا توجد بيانات سعر من Yahoo أو Webull");
+    }
 
     const ts = z.timestamp || [];
     const qv = z.indicators?.quote?.[0] || {};
