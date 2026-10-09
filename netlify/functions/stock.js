@@ -39,9 +39,9 @@ exports.handler = async (event) => {
   };
 
 
-  const webullAppKey = process.env.WEBULL_APP_KEY;
-  const webullAppSecret = process.env.WEBULL_APP_SECRET;
-  const webullHost = process.env.WEBULL_API_HOST || "api.sandbox.webull.com";
+  const webullAppKey = String(process.env.WEBULL_APP_KEY || "").trim();
+  const webullAppSecret = String(process.env.WEBULL_APP_SECRET || "").trim();
+  const webullHost = String(process.env.WEBULL_API_HOST || "api.sandbox.webull.com").trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
 
   const webullRequest = async (path, params = {}, options = {}) => {
     if (!webullAppKey || !webullAppSecret) {
@@ -64,8 +64,11 @@ exports.handler = async (event) => {
     const str1 = Object.keys(all).sort().map(k => k + "=" + all[k]).join("&");
     const bodyHash = bodyString ? crypto.createHash("md5").update(bodyString, "utf8").digest("hex").toUpperCase() : "";
     const signingText = path + "&" + str1 + (bodyHash ? "&" + bodyHash : "");
+    // Match Python urllib.parse.quote(str3, safe="") used in Webull's official example.
+    const encodedSigningText = encodeURIComponent(signingText)
+      .replace(/[!'()*]/g, ch => "%" + ch.charCodeAt(0).toString(16).toUpperCase());
     const signature = crypto.createHmac("sha1", webullAppSecret + "&")
-      .update(encodeURIComponent(signingText), "utf8").digest("base64");
+      .update(encodedSigningText, "utf8").digest("base64");
     const url = new URL("https://" + webullHost + path);
     for (const [k,v] of Object.entries(params)) {
       if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
@@ -472,7 +475,10 @@ exports.handler = async (event) => {
     return out(ok ? 200 : 502, {
       ok, source: "Webull OpenAPI", environment: webullHost, symbol,
       snapshot, snapshotError, bars, barsError,
-      note: "اختبار منفصل لواجهة اللقطات وواجهة الشموع؛ لا يعرض مفاتيح API."
+      credentialsConfigured: Boolean(webullAppKey && webullAppSecret),
+      appKeyLength: webullAppKey.length,
+      hostConfigured: webullHost,
+      note: "اختبار منفصل لواجهة اللقطات وواجهة الشموع؛ لا يعرض مفاتيح API. إذا استمر خطأ التوقيع بعد هذا الإصلاح، راجع تطابق App Key وApp Secret مع بيئة Sandbox."
     });
   }
 
