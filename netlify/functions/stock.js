@@ -261,9 +261,10 @@ exports.handler = async (event) => {
     const highAfterSplit=splitDate&&splitBars.length?Math.max(...splitBars.map(x=>x.h)):null;
     const short=await getShort(symbol,ref);
 
-    const shares=Number(ref.share_class_shares_outstanding??ref.weighted_shares_outstanding);
-    const marketCap=Number(ref.market_cap);
-    const derivedCap=Number.isFinite(marketCap)&&marketCap>0?marketCap:(Number.isFinite(shares)&&shares>0?shares*last.c:null);
+    const reportedShares=Number(ref.share_class_shares_outstanding??ref.weighted_shares_outstanding??ref.sharesOutstanding??ref.shares_outstanding);
+    const marketCapRaw=Number(ref.market_cap??ref.marketCap);
+    const shares=Number.isFinite(reportedShares)&&reportedShares>0?reportedShares:(Number.isFinite(marketCapRaw)&&marketCapRaw>0&&last.c>0?marketCapRaw/last.c:NaN);
+    const derivedCap=Number.isFinite(marketCapRaw)&&marketCapRaw>0?marketCapRaw:(Number.isFinite(shares)&&shares>0?shares*last.c:null);
 
     return {
       symbol,
@@ -287,8 +288,10 @@ exports.handler = async (event) => {
       splitFrom:latestSplit?.split_from??null,
       splitTo:latestSplit?.split_to??null,
       splitType:latestSplit?.adjustment_type??null,
+      hasSplit:Boolean(splitDate),
+      splitWatch:Boolean(splitDate&&splitDays<=100),
       highAfterSplit,
-      companyName:ref.name||symbol
+      companyName:ref.longName||ref.shortName||ref.name||symbol
     };
   };
 
@@ -305,12 +308,13 @@ exports.handler = async (event) => {
     }
   }
 
+  const splitWatchSymbols=["NTCL","JZ","YYGH","SMSI","CETX","WXM","ICCM","SILO","FEMY","AMIX","FCUV","ORIS","VRAX","ASBP","AIXI","BNZI","OLOX","LNAI","FTFT","DKI"];
   let symbols=[];
   const referenceMap=new Map();
   const diagnostics={snapshot:0,priceVolume:0,referenceChecked:0,microcaps:0,bars:0,yahooQuotes:0};
 
   if(configured.length){
-    symbols=configured;
+    symbols=[...new Set([...configured,...splitWatchSymbols])];
     try{
       const qmap=await yahooQuotes(symbols);
       for(const [k,v] of qmap) referenceMap.set(k,v);
@@ -382,7 +386,8 @@ exports.handler = async (event) => {
           }
         } catch(e) { diagnostics["screenerError_"+id]=String(e.message||e); }
       }
-      const rows=[...seen.values()].sort((a,b)=>b.volume-a.volume).slice(0,30);
+      const rows=[...seen.values()].sort((a,b)=>b.volume-a.volume).slice(0,20);
+      for(const symbol of splitWatchSymbols){if(!seen.has(symbol))rows.push({symbol,price:null,volume:0,splitWatch:true});}
       diagnostics.yahooScreenerCandidates=rows.length;
       if(rows.length){
         try {
@@ -400,11 +405,11 @@ exports.handler = async (event) => {
 
   // Last-resort universe: still run the technical engine if Yahoo's predefined screeners are unavailable.
   if(!symbols.length && !massiveKey && !configured.length){
-    symbols=[
+    symbols=[...new Set([
       "NTCL","PN","FEMY","AMIX","SILO","PRFX","DXST","INUV","BGL","ATPC",
       "MTEN","AMOD","PTLE","SMSI","CETX","WXM","ICCM","VRAX","ORIS","YYGH",
-      "FCUV","ASBP","AIX","JZ","CRE","SSM","CDLX","PMI","GDC","BMGL"
-    ];
+      "FCUV","ASBP","AIX","JZ","CRE","SSM","CDLX","PMI","GDC","BMGL",...splitWatchSymbols
+    ])];
     diagnostics.universeFallback="configured safety list; live price/volume filters still apply";
   }
 
@@ -433,8 +438,13 @@ exports.handler = async (event) => {
     results.push(...got.filter(Boolean));
   }
 
+  const beforeLimits=results.length;
+  const eligible=results.filter(x=>Number.isFinite(Number(x.marketCap))&&Number(x.marketCap)>0&&Number(x.marketCap)<10000000&&Number.isFinite(Number(x.sharesOutstanding))&&Number(x.sharesOutstanding)>0&&Number(x.sharesOutstanding)<5000000);
+  diagnostics.rejectedByMicrocapLimits=beforeLimits-eligible.length;
+  eligible.sort((a,b)=>{const as=a.splitDate&&Number(a.splitDays)<=100?1:0,bs=b.splitDate&&Number(b.splitDays)<=100?1:0;if(bs!==as)return bs-as;if(a.splitDate&&!b.splitDate)return -1;if(b.splitDate&&!a.splitDate)return 1;return Number(b.score||0)-Number(a.score||0);});
+
   return out(200,{
-    stocks:results,
+    stocks:eligible,
     errors:errors.slice(0,12),
     universeCount:symbols.length,
     source:massiveKey?"Massive + Yahoo":"Yahoo Finance",
