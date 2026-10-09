@@ -412,7 +412,7 @@ exports.handler = async (event) => {
         } catch(e) { diagnostics["screenerError_"+id]=String(e.message||e); }
       }
       // Analyze a wider Yahoo screener pool so the microcap limits do not leave only a handful of results.
-      const rows=[...seen.values()].sort((a,b)=>b.volume-a.volume).slice(0,50);
+      const rows=[...seen.values()].sort((a,b)=>b.volume-a.volume).slice(0,250);
       for(const symbol of splitWatchSymbols){if(!seen.has(symbol))rows.push({symbol,price:null,volume:0,splitWatch:true});}
       diagnostics.yahooScreenerCandidates=rows.length;
       // Seed fundamentals from screener records before trying the often-blocked quote endpoint.
