@@ -2,8 +2,9 @@ exports.handler = async (event) => {
   const q = event.queryStringParameters || {};
   const tf = q.tf || "1d";
   const requested = String(q.symbol || "").trim().toUpperCase().replace(/[^A-Z0-9.\-]/g, "");
-  const massiveKey = process.env.MASSIVE_API_KEY;
-  const alphaKey = process.env.ALPHA_VANTAGE_API_KEY;
+  // This scanner intentionally uses Yahoo Finance only; ignore other provider keys.
+  const massiveKey = "";
+  const alphaKey = "";
   const configured = String(process.env.SCAN_SYMBOLS || "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
 
   const headers = {
