@@ -38,6 +38,51 @@ exports.handler = async (event) => {
     return j;
   };
 
+
+  const webullAppKey = process.env.WEBULL_APP_KEY;
+  const webullAppSecret = process.env.WEBULL_APP_SECRET;
+  const webullHost = process.env.WEBULL_API_HOST || "api.sandbox.webull.com";
+
+  const webullRequest = async (path, params = {}) => {
+    if (!webullAppKey || !webullAppSecret) {
+      throw new Error("مفاتيح Webull غير مضافة في Netlify: WEBULL_APP_KEY و WEBULL_APP_SECRET");
+    }
+    const crypto = require("crypto");
+    const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    const nonce = crypto.randomBytes(16).toString("hex");
+    const signingHeaders = {
+      "x-app-key": webullAppKey,
+      "x-timestamp": timestamp,
+      "x-signature-algorithm": "HMAC-SHA1",
+      "x-signature-version": "1.0",
+      "x-signature-nonce": nonce,
+      "host": webullHost
+    };
+    const all = {...params, ...signingHeaders};
+    const str1 = Object.keys(all).sort().map(k => k + "=" + all[k]).join("&");
+    const encoded = encodeURIComponent(path + "&" + str1);
+    const signature = crypto.createHmac("sha1", webullAppSecret + "&").update(encoded, "utf8").digest("base64");
+    const url = new URL("https://" + webullHost + path);
+    for (const [k,v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
+    }
+    const response = await fetch(url, {headers: {
+      "Accept":"application/json",
+      "x-app-key":webullAppKey,
+      "x-timestamp":timestamp,
+      "x-signature":signature,
+      "x-signature-algorithm":"HMAC-SHA1",
+      "x-signature-version":"1.0",
+      "x-signature-nonce":nonce,
+      "x-version":"v3"
+    }});
+    const raw = await response.text();
+    let data = {};
+    try { data = JSON.parse(raw); } catch {}
+    if (!response.ok) throw new Error("Webull HTTP " + response.status + (data.message ? ": " + data.message : ""));
+    return data;
+  };
+
   const dateAgo = days => new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
 
   const normalize = rows => (rows || []).map(x => ({
@@ -362,6 +407,21 @@ exports.handler = async (event) => {
   };
 
   // Direct search uses Yahoo multi-quote for fundamentals, then the same technical engine.
+  if(String(q.webullTest || "") === "1"){
+    try {
+      const symbol = requested || "AAPL";
+      const data = await webullRequest("/market-data/stocks/snapshots/list", {
+        symbols: symbol,
+        category: "US_STOCK",
+        extend_hour_required: "false",
+        overnight_required: "false"
+      });
+      return out(200, {ok:true, source:"Webull OpenAPI", environment:webullHost, symbol, data});
+    } catch (e) {
+      return out(502, {ok:false, source:"Webull OpenAPI", environment:webullHost, error:String(e.message || e)});
+    }
+  }
+
   if(requested){
     try{
       let ref={};
