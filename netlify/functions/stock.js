@@ -188,6 +188,49 @@ exports.handler = async (event) => {
     return e12==null||e26==null?null:e12-e26;
   };
 
+
+  // Public no-key Yahoo fundamentals fallback. Share count is only accepted when explicitly reported.
+  const yahooFundamentals = async symbol => {
+    let lastError = null;
+    const end = Math.floor(Date.now()/1000), start = end - 5*365*86400;
+    for (const host of ["query2.finance.yahoo.com","query1.finance.yahoo.com"]) {
+      const u = new URL("https://" + host + "/ws/fundamentals-timeseries/v1/finance/timeseries/" + encodeURIComponent(symbol));
+      u.searchParams.set("symbol", symbol);
+      u.searchParams.set("type", "sharesOutstanding,impliedSharesOutstanding,trailingMarketCap");
+      u.searchParams.set("period1", String(start));
+      u.searchParams.set("period2", String(end));
+      try {
+        const response = await fetch(u, {headers: {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125 Safari/537.36", "Accept":"application/json"}});
+        if (!response.ok) { lastError = new Error("Yahoo fundamentals " + response.status); continue; }
+        const j = await response.json();
+        const found = {};
+        const latest = arr => {
+          if (!Array.isArray(arr)) return null;
+          const vals = arr.map(v => ({t:Number(v.timestamp || 0), n:Number(v?.reportedValue?.raw ?? v?.raw ?? v?.value)}))
+            .filter(v => v.n > 0 && Number.isFinite(v.n)).sort((a,b) => b.t-a.t);
+          return vals.length ? vals[0].n : null;
+        };
+        const walk = node => {
+          if (!node || typeof node !== "object") return;
+          if (Array.isArray(node)) { node.forEach(walk); return; }
+          for (const key of ["sharesOutstanding","impliedSharesOutstanding","trailingMarketCap"]) {
+            if (found[key] == null && Array.isArray(node[key])) {
+              const n = latest(node[key]);
+              if (n != null) found[key] = n;
+            }
+          }
+          Object.values(node).forEach(v => { if (v && typeof v === "object") walk(v); });
+        };
+        walk(j);
+        if (found.sharesOutstanding == null && found.impliedSharesOutstanding != null) found.sharesOutstanding = found.impliedSharesOutstanding;
+        if (found.marketCap == null && found.trailingMarketCap != null) found.marketCap = found.trailingMarketCap;
+        if (Object.keys(found).length) return found;
+        lastError = new Error("Yahoo fundamentals لم يرجع بيانات الأسهم");
+      } catch (e) { lastError = e; }
+    }
+    throw lastError || new Error("Yahoo fundamentals unavailable");
+  };
+
   const getReference = async symbol => {
     if(!massiveKey) return {};
     try {
@@ -284,9 +327,10 @@ exports.handler = async (event) => {
     const short=await getShort(symbol,ref);
 
     const reportedShares=Number(ref.share_class_shares_outstanding??ref.weighted_shares_outstanding??ref.sharesOutstanding??ref.shares_outstanding);
-    const marketCapRaw=Number(ref.market_cap??ref.marketCap);
-    const shares=Number.isFinite(reportedShares)&&reportedShares>0?reportedShares:(Number.isFinite(marketCapRaw)&&marketCapRaw>0&&last.c>0?marketCapRaw/last.c:NaN);
-    const derivedCap=Number.isFinite(marketCapRaw)&&marketCapRaw>0?marketCapRaw:(Number.isFinite(shares)&&shares>0?shares*last.c:null);
+    const marketCapRaw=Number(ref.market_cap??ref.marketCap??ref.trailingMarketCap);
+    // Never label marketCap/price as a verified share count.
+    const shares=Number.isFinite(reportedShares)&&reportedShares>0?reportedShares:NaN;
+    const derivedCap=Number.isFinite(marketCapRaw)&&marketCapRaw>0?marketCapRaw:null;
 
     return {
       symbol,
@@ -323,6 +367,9 @@ exports.handler = async (event) => {
       let ref={};
       try { const qmap=await yahooQuotes([requested]); ref=qmap.get(requested)||{}; } catch {}
       if(!Object.keys(ref).length) ref=await getReference(requested);
+      if (!(Number(ref.sharesOutstanding??ref.shares_outstanding??ref.share_class_shares_outstanding)>0) || !(Number(ref.marketCap??ref.market_cap)>0)) {
+        try { ref={...ref,...await yahooFundamentals(requested)}; } catch {}
+      }
       const x=await buildOne(requested,ref);
       return out(200,{stocks:[x],errors:[],universeCount:1,source:"Yahoo Finance",tf,updated:new Date().toLocaleString("ar-SA")});
     }catch(e){
@@ -449,15 +496,17 @@ exports.handler = async (event) => {
     const batch=symbols.slice(i,i+6);
     const got=await Promise.all(batch.map(async symbol=>{
       try{
-        let ref=referenceMap.get(symbol);
-        if(!ref){
-          try{
-            const qmap=await yahooQuotes([symbol]);
-            ref=qmap.get(symbol)||{};
-            referenceMap.set(symbol,ref);
-          }catch{}
+        let ref=referenceMap.get(symbol)||{};
+        try {
+          const qmap=await yahooQuotes([symbol]);
+          ref={...ref,...(qmap.get(symbol)||{})};
+        } catch {}
+        if (!(Number(ref.sharesOutstanding??ref.shares_outstanding??ref.share_class_shares_outstanding)>0) || !(Number(ref.marketCap??ref.market_cap)>0)) {
+          try { ref={...ref,...await yahooFundamentals(symbol)}; }
+          catch(e) { diagnostics["fundamentals_"+symbol]=String(e.message||e); }
         }
-        const x=await buildOne(symbol,ref||{});
+        referenceMap.set(symbol,ref);
+        const x=await buildOne(symbol,ref);
         diagnostics.bars++;
         return x;
       }catch(e){errors.push(symbol+": "+e.message);return null;}
