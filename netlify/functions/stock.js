@@ -541,22 +541,42 @@ exports.handler = async (event) => {
         .sort((a,b)=>b.volume-a.volume);
       diagnostics.priceVolume=pv.length;
 
-      // Massive Basic is only 5 calls/min. Do NOT call reference once per ticker.
-      // Yahoo's multi-symbol quote supplies market cap, shares, float and short statistics in batches.
+      // First try Yahoo's batch quotes; if blocked (401/403), use Massive's own reference API
+      // for a small batch so the scanner still works on the free 5-requests/minute tier.
       const candidateRows=pv.slice(0,500);
-      const qmap=await yahooQuotes(candidateRows.map(x=>x.symbol));
-      diagnostics.yahooQuotes=qmap.size;
-      diagnostics.referenceChecked=qmap.size;
-
-      const candidates=[];
-      for(const row of candidateRows){
-        const r=qmap.get(row.symbol);
-        if(!r) continue;
-        referenceMap.set(row.symbol,r);
-        candidates.push(row);
+      let candidates=[];
+      try {
+        const qmap=await yahooQuotes(candidateRows.map(x=>x.symbol));
+        diagnostics.yahooQuotes=qmap.size;
+        for(const row of candidateRows){
+          const r=qmap.get(row.symbol);
+          if(!r) continue;
+          referenceMap.set(row.symbol,{...r,regularMarketPrice:r.regularMarketPrice??row.price,regularMarketVolume:r.regularMarketVolume??row.volume});
+          candidates.push(row);
+        }
+      } catch(e) {
+        diagnostics.yahooQuotes=0;
+        diagnostics.yahooQuoteFallbackError=String(e.message||e);
       }
+      // If Yahoo quotes are blocked, check the five highest-volume candidates against Massive reference data.
+      // Five requests match Massive Basic's published rate limit.
+      if(!candidates.length) {
+        const refs=[];
+        for(const row of pv.slice(0,5)) {
+          try {
+            const ref=await getReference(row.symbol);
+            if(ref && Object.keys(ref).length) {
+              const merged={...ref,regularMarketPrice:row.price,regularMarketVolume:row.volume};
+              referenceMap.set(row.symbol,merged);
+              refs.push(row);
+            } else diagnostics["reference_"+row.symbol]="Massive returned no reference fields";
+          } catch(e) { diagnostics["reference_"+row.symbol]=String(e.message||e); }
+        }
+        candidates=refs;
+        diagnostics.referenceFallbackCandidates=refs.length;
+      }
+      diagnostics.referenceChecked=candidates.length;
       diagnostics.eligibleCandidates=candidates.length;
-      // Do not incorrectly discard stocks solely because their market cap or share count exceeds an arbitrary $10M cap.
       symbols=candidates.sort((a,b)=>b.volume-a.volume).slice(0,30).map(x=>x.symbol);
     }catch(e){
       diagnostics.error=String(e.message||e);
@@ -644,6 +664,8 @@ exports.handler = async (event) => {
   const beforeLimits=results.length;
   const eligible=results.filter(x=>Number.isFinite(Number(x.marketCap))&&Number(x.marketCap)>0&&Number(x.marketCap)<10000000&&Number.isFinite(Number(x.sharesOutstanding))&&Number(x.sharesOutstanding)>0&&Number(x.sharesOutstanding)<5000000);
   diagnostics.rejectedByMicrocapLimits=beforeLimits-eligible.length;
+  diagnostics.rejectedMissingMarketCap=results.filter(x=>!(Number.isFinite(Number(x.marketCap))&&Number(x.marketCap)>0)).length;
+  diagnostics.rejectedMissingShares=results.filter(x=>!(Number.isFinite(Number(x.sharesOutstanding))&&Number(x.sharesOutstanding)>0)).length;
   eligible.sort((a,b)=>{const as=a.splitDate&&Number(a.splitDays)<=100?1:0,bs=b.splitDate&&Number(b.splitDays)<=100?1:0;if(bs!==as)return bs-as;if(a.splitDate&&!b.splitDate)return -1;if(b.splitDate&&!a.splitDate)return 1;return Number(b.score||0)-Number(a.score||0);});
 
   if(!eligible.length) {
