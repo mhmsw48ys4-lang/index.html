@@ -130,38 +130,8 @@ exports.handler = async (event) => {
     }
     const z = j?.chart?.result?.[0];
     if (!z) {
-      // Fallback to Webull OpenAPI historical bars when Yahoo chart data is unavailable.
-      if (webullAppKey && webullAppSecret) {
-        try {
-          const interval = tf === "1w" ? "W" : tf === "4h" ? "M240" : "D";
-          const count = tf === "1w" ? "700" : "420";
-          const wb = await webullRequest("/market-data/stocks/bars/list", {}, {
-            method: "POST",
-            body: {symbols:[symbol], category:"US_STOCK", timespan:interval, count:Number(count), real_time_required:true}
-          });
-          // Batch endpoint wraps each symbol in its own result object.
-          const wrapped = Array.isArray(wb?.result) ? wb.result : Array.isArray(wb?.data) ? wb.data : [];
-          const rows = wrapped.length && Array.isArray(wrapped[0]?.result)
-            ? wrapped[0].result
-            : wrapped;
-          const bars = rows.map(x => ({
-            date: new Date(x.time || x.timestamp || x.t).toISOString(),
-            o: Number(x.open ?? x.o),
-            h: Number(x.high ?? x.h),
-            l: Number(x.low ?? x.l),
-            c: Number(x.close ?? x.c),
-            v: Number(x.volume ?? x.v ?? 0)
-          })).filter(x => [x.o,x.h,x.l,x.c].every(Number.isFinite))
-            .sort((a,b) => a.date.localeCompare(b.date));
-          if (bars.length) {
-            bars._splits = [];
-            return bars;
-          }
-        } catch (webullError) {
-          lastError = new Error((lastError?.message || "Yahoo data unavailable") + "; Webull fallback: " + String(webullError.message || webullError));
-        }
-      }
-      throw new Error(lastError?.message || "لا توجد بيانات سعر من Yahoo أو Webull");
+      throw new Error((lastError?.message || "لا توجد بيانات تاريخية من Yahoo") +
+        (massiveKey ? "؛ لم تنجح مصادر الشموع البديلة من Massive" : "؛ مفتاح MASSIVE_API_KEY غير موجود في إعدادات Netlify"));
     }
 
     const ts = z.timestamp || [];
@@ -635,7 +605,10 @@ exports.handler = async (event) => {
   }
 
   if(!symbols.length){
-    return out(200,{stocks:[],errors:["لم تصل قائمة أسهم من مزود البيانات. راجع تشخيص المصدر: "+JSON.stringify(diagnostics)],universeCount:0,source:massiveKey?"Massive + Yahoo":"Yahoo Finance",tf,diagnostics});
+    if(!massiveKey && !configured.length) {
+      diagnostics.message = "مفتاح MASSIVE_API_KEY غير موجود في إعدادات Netlify، وYahoo لا يعيد قائمة أسعار موثوقة. أضف المفتاح في إعدادات موقع النشر الصحيح ثم أعد النشر.";
+    }
+    return out(200,{stocks:[],errors:["لم تصل قائمة أسهم من مزود البيانات: "+JSON.stringify(diagnostics)],universeCount:0,source:massiveKey?"Massive + Yahoo":"لا يوجد مزود بيانات مهيأ",tf,diagnostics});
   }
 
   const results=[],errors=[];
